@@ -203,6 +203,10 @@ def merge_recipes(base, *overlays):
                 continue
             if k in ADDITIVE and isinstance(v, (int, float)) and isinstance(out.get(k), (int, float)):
                 out[k] = out[k] + v
+            elif k == "masks" and isinstance(v, list):
+                # local adjustments stack; an overlay entry with the same "name" replaces it
+                names = {m.get("name") for m in v if m.get("name")}
+                out[k] = [m for m in out.get(k, []) if m.get("name") not in names] + copy.deepcopy(v)
             elif isinstance(v, dict) and isinstance(out.get(k), dict):
                 out[k] = _override(out[k], v)
             else:
@@ -560,6 +564,9 @@ def develop(img, recipe):
     else:
         out = hsl_and_saturation(out, r)
     out = color_grade(out, r.get("color_grade"))
+    if r.get("masks"):
+        import masks as M  # local adjustments (lazy: masks imports engine)
+        out = M.apply_masks(out, r["masks"])
     if ref_hsv is not None:
         out = protect_skin(out, ref_hsv, skin)
         del ref_hsv

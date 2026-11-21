@@ -38,23 +38,6 @@ def read_exif(path):
     return out
 
 
-_FACE = None
-
-
-def find_faces(img):
-    global _FACE
-    try:
-        if _FACE is None:
-            _FACE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        g = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
-        g = cv2.equalizeHist(g)
-        faces = _FACE.detectMultiScale(g, scaleFactor=1.12, minNeighbors=7,
-                                       minSize=(max(24, g.shape[1] // 25),) * 2)
-        return [tuple(int(v) for v in f) for f in faces]
-    except Exception:
-        return []
-
-
 def metering(Lg):
     """Center-weighted mean of non-blown pixels (like a camera's matrix/centre meter)."""
     h, w = Lg.shape
@@ -127,7 +110,10 @@ def _analyze(path, img=None):
         tags.append("foliage/green")
     if ((hsv[..., 0] > 15) & (hsv[..., 0] < 50) & (hsv[..., 1] > 0.35)).mean() > 0.2:
         tags.append("warm/autumn-or-tungsten")
-    faces = find_faces(img)
+    import masks as M
+    nboxes = M.detect_faces(img)  # normalised [x, y, w, h]
+    H_, W_ = Lg.shape
+    faces = [(int(x * W_), int(y * H_), max(1, int(w * W_)), max(1, int(h * H_))) for x, y, w, h in nboxes]
     if faces:
         tags.append(f"people({len(faces)} face)")
 
@@ -136,10 +122,30 @@ def _analyze(path, img=None):
     corr = {}
     lin_of = lambda v: max(float(E.srgb_to_linear(np.float32(v))), 1e-4)
     meter = metering(Lg)
+    face_mask = None
     if faces:
-        face_l = float(np.mean([np.median(Lg[y:y + h, x:x + w]) for x, y, w, h in faces]))
+        # inner 50% of each face box (no hair/background); mix of luminance and max-channel so a
+        # saturated tungsten-lit face isn't mistaken for a dark one
+        vals = []
+        for x, y, w, h in faces:
+            c = img[y + h // 4: y + 3 * h // 4 + 1, x + w // 4: x + 3 * w // 4 + 1].reshape(-1, 3)
+            lg = E.linear_to_srgb(E.luminance(E.srgb_to_linear(c)))
+            vals.append(float(np.median(0.5 * lg + 0.5 * c.max(1))))
+        face_l = float(np.mean(vals))
         ev = math.log2(lin_of(0.56) / lin_of(face_l)) * 0.8
+        if "warm/autumn-or-tungsten" in tags or night:
+            ev *= 0.5  # keep the mood of a dim / lamp-lit scene
         meter_note = f"face {face_l:.2f}"
+        # backlit / dark face against a brighter scene: light the PERSON locally instead of
+        # dragging the whole frame (sky, city lights) up with global exposure
+        if face_l < 0.32 and meter - face_l > 0.10 and ev > 0.3:
+            local_ev = round(float(np.clip(ev * 0.75, 0.2, 1.3)), 2)
+            face_mask = {"name": "auto: subject lift",
+                         "mask": {"type": "subject", "subtract": [{"type": "sky"}],
+                                  "intersect": [{"type": "luminance", "range": [0.0, 0.45], "feather": 0.2}]},
+                         "adjust": {"exposure": local_ev, "shadows": 20, "contrast": -5}}
+            ev = min(ev * 0.35, 0.5)
+            meter_note += f" (backlit: subject mask +{local_ev}EV)"
     else:
         target = 0.30 if night else 0.45
         ev = math.log2(lin_of(target) / lin_of(meter)) * 0.55
@@ -148,6 +154,8 @@ def _analyze(path, img=None):
     if ev > 0:
         ev *= max(0.3, 1 - clip_hi * 15)  # don't blow already-clipped scenes
     corr["exposure"] = round(float(np.clip(ev, -0.8, 1.2)), 2)
+    if face_mask:
+        corr["masks"] = [face_mask]
 
     hl = -15.0
     if q[99.5] > 0.96 or clip_hi > 0.004:

@@ -12,6 +12,8 @@
   pe.py compare BEFORE AFTER -o cmp.jpg         labelled side-by-side
   pe.py review ORIG_DIR EDIT_DIR                before|after pair sheets for a whole output folder
   pe.py contact IMG... -o sheet.jpg             contact sheet
+  pe.py cull DIR                                bursts -> groups, veto blur/exposure, picks.txt + sheets
+  pe.py masks IMG --mask face --mask sky        red overlay of local-adjustment masks
   pe.py match IMG --ref REF.jpg [-o recipe.json] derive a recipe that moves IMG toward REF's look
   pe.py xmp STYLE|RECIPE.json [-o out.xmp]      export as Lightroom preset
 """
@@ -42,6 +44,10 @@ import engine as E  # noqa: E402
 def expand(paths):
     out = []
     for p in paths:
+        if p.startswith("@"):  # @list.txt: one path per line (e.g. cull picks.txt)
+            out += expand([ln.strip() for ln in Path(p[1:]).read_text().splitlines()
+                           if ln.strip() and not ln.startswith("#")])
+            continue
         pp = Path(p)
         if pp.is_dir():
             out += sorted(x for x in pp.iterdir() if x.suffix.lower() in IMG_EXT and not x.name.startswith("._"))
@@ -221,7 +227,9 @@ def cmd_board(a):
 def cmd_compare(a):
     size = a.size
     ims = []
-    for p, lab in zip(a.images, a.labels.split(",") if a.labels else [None] * len(a.images)):
+    labels = (a.labels.split(a.sep) if a.labels else [])
+    labels += [None] * (len(a.images) - len(labels))  # never drop images when labels run short
+    for p, lab in zip(a.images, labels):
         im = E.load_image(p, size)
         ims.append(label(im, lab or Path(p).stem))
     h = min(i.shape[0] for i in ims)
@@ -282,6 +290,102 @@ def cmd_review(a):
     print("\n".join(outs))
 
 
+def cmd_masks(a):
+    """Show every mask of a recipe as a red overlay (verify coverage before trusting a local edit)."""
+    import masks as M
+    path = expand([a.image])[0]
+    img = E.load_image(str(path), a.size)
+    entries = []
+    if a.auto:
+        entries += autotone.analyze(str(path)).get("auto_correction", {}).get("masks", [])
+    for src in (a.recipe, a.adjust):
+        if src:
+            r = load_json_arg(src)
+            r = r.get("recipe", r)
+            r = r.get(path.name) or r.get(path.stem) or r  # per-file json
+            entries += r.get("masks", []) if isinstance(r, dict) else []
+    for spec in a.mask or []:
+        entries.append({"name": spec, "mask": load_json_arg(spec) if spec.startswith("{") else {"type": spec}})
+    if not entries:
+        sys.exit("no masks: pass --auto, --recipe, --adjust or --mask face|subject|sky|'{json}'")
+    faces = M.detect_faces(img)
+    tiles = [label(img, f"{path.stem}  faces={len(faces)}")]
+    for ov, name in M.overlay(img, entries, faces):
+        tiles.append(label(ov, str(name)))
+    dst = a.out or str(DEFAULT_OUT / f"{path.stem}_masks.jpg")
+    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+    E.save_image(grid(tiles, min(a.cols, len(tiles))), dst, quality=85)
+    print(dst)
+
+
+def _thumb_tile(r, size, picked):
+    from PIL import Image
+    im = Image.open(r["thumb"]).convert("RGB")
+    bh = size * 2 // 3  # fixed 3:2 cell so portrait and landscape frames tile together
+    im.thumbnail((size, bh))
+    t = np.asarray(im, dtype=np.float32) / 255
+    pad = np.ones((bh, size, 3), np.float32) * 0.12
+    y0, x0 = (bh - t.shape[0]) // 2, (size - t.shape[1]) // 2
+    pad[y0:y0 + t.shape[0], x0:x0 + t.shape[1]] = t
+    col = (0.1, 0.85, 0.2) if picked else ((0.9, 0.15, 0.15) if r["veto"] else None)
+    if col:
+        b = max(3, size // 60)
+        pad[:b], pad[-b:], pad[:, :b], pad[:, -b:] = col, col, col, col
+    txt = f"{Path(r['file']).stem} #{r['rank']} t{r['tech']:.2f}" + (f" {','.join(r['veto'])}" if r["veto"] else "")
+    return label(pad, txt, size=max(11, size // 20))
+
+
+def cmd_cull(a):
+    import cull as C
+    files = expand(a.images)
+    if not files:
+        sys.exit("no images")
+    out = Path(a.out or (DEFAULT_OUT / (files[0].parent.name + "_cull")))
+    t0 = time.time()
+    rows = C.scan(files, out, jobs=a.jobs)
+    groups = C.assess(C.group(rows, a.gap, a.strict))
+    picks, rejected = C.summarize(groups, a.keep)
+    errors = [r for r in rows if "error" in r]
+    multi = [g for g in groups if len(g) > 1]
+    (out / "cull.json").write_text(json.dumps(
+        {"source": str(files[0].parent), "frames": len(rows), "groups": len(groups), "burst_groups": len(multi),
+         "vetoed": rejected, "picks": len(picks), "errors": errors,
+         "params": {"gap_s": a.gap, "strict": a.strict, "keep_per_group": a.keep},
+         "group_list": [[{k: r[k] for k in ("file", "rank", "tech", "sharp", "lum", "clip_hi", "faces", "veto")}
+                         for r in sorted(g, key=lambda r: r["rank"])] for g in groups]},
+        ensure_ascii=False, indent=1))
+    (out / "picks.txt").write_text("\n".join(picks) + "\n")
+    pickset = set(picks)
+    # burst sheets: one row per multi-frame group (green = technical pick, red = vetoed)
+    sz = a.thumb
+    rows_img, sheets = [], []
+    for gi, g in enumerate(multi):
+        g = sorted(g, key=lambda r: r["file"])[: a.max_per_row]
+        tiles = [_thumb_tile(r, sz, r["file"] in pickset) for r in g]
+        row = np.concatenate([np.pad(t, ((0, 0), (0, 4), (0, 0)), constant_values=1) for t in tiles], 1)
+        rows_img.append(row)
+    for i in range(0, len(rows_img), a.rows_per_sheet):
+        chunk = rows_img[i:i + a.rows_per_sheet]
+        wmax = max(r.shape[1] for r in chunk)
+        chunk = [np.pad(r, ((0, 6), (0, wmax - r.shape[1]), (0, 0)), constant_values=1) for r in chunk]
+        dst = out / f"bursts_{i // a.rows_per_sheet + 1:02d}.jpg"
+        E.save_image(np.concatenate(chunk, 0), dst, quality=82)
+        sheets.append(str(dst))
+    # picks sheets: every kept frame, numbered, for the visual "moment" pass
+    prow = [r for g in groups for r in g if r["file"] in pickset]
+    per = a.cols * a.rows_per_sheet
+    for i in range(0, len(prow), per):
+        tiles = [_thumb_tile(r, sz, False) for r in prow[i:i + per]]
+        dst = out / f"picks_{i // per + 1:02d}.jpg"
+        E.save_image(grid(tiles, a.cols, gap=6), dst, quality=82)
+        sheets.append(str(dst))
+    print(f"{len(rows)} frames -> {len(groups)} groups ({len(multi)} bursts), vetoed {rejected}, "
+          f"technical picks {len(picks)}  [{time.time() - t0:.0f}s]")
+    print(f"out: {out}/  cull.json picks.txt  sheets: {len(sheets)}")
+    for s_ in sheets:
+        print("  " + s_)
+
+
 def cmd_match(a):
     import match
     rec = match.match_recipe(str(a.image), [str(p) for p in expand(a.ref)], a.strength)
@@ -334,6 +438,7 @@ def main():
     p.set_defaults(fn=cmd_board)
 
     p = sp.add_parser("compare"); p.add_argument("images", nargs="+"); p.add_argument("--labels")
+    p.add_argument("--sep", default=",", help="label separator (use '|' when labels contain commas)")
     p.add_argument("--size", type=int, default=1200); p.add_argument("--cols", type=int)
     p.add_argument("-o", "--out"); p.set_defaults(fn=cmd_compare)
 
@@ -346,6 +451,24 @@ def main():
     p.add_argument("--size", type=int, default=520); p.add_argument("--cols", type=int, default=2)
     p.add_argument("--per-sheet", type=int, default=8); p.add_argument("-o", "--out")
     p.set_defaults(fn=cmd_review)
+
+    p = sp.add_parser("cull", help="group bursts, veto technical failures, rank, contact sheets")
+    p.add_argument("images", nargs="+"); p.add_argument("-o", "--out")
+    p.add_argument("--gap", type=float, default=30.0, help="max seconds between frames of one group")
+    p.add_argument("--strict", type=float, default=0.0, help="0..0.3: raise similarity bar (smaller groups)")
+    p.add_argument("--keep", type=int, default=1, help="technical picks per group")
+    p.add_argument("--thumb", type=int, default=300); p.add_argument("--cols", type=int, default=6)
+    p.add_argument("--rows-per-sheet", type=int, default=6); p.add_argument("--max-per-row", type=int, default=8)
+    p.add_argument("-j", "--jobs", type=int, default=4)
+    p.set_defaults(fn=cmd_cull)
+
+    p = sp.add_parser("masks", help="red-overlay preview of local-adjustment masks")
+    p.add_argument("image"); p.add_argument("--auto", action="store_true", help="include auto-suggested masks")
+    p.add_argument("--recipe", help="recipe / .recipe.json / per-file json containing masks")
+    p.add_argument("--adjust", help="JSON string with a masks list")
+    p.add_argument("--mask", action="append", help="mask type or JSON spec (repeatable)")
+    p.add_argument("--size", type=int, default=700); p.add_argument("--cols", type=int, default=3)
+    p.add_argument("-o", "--out"); p.set_defaults(fn=cmd_masks)
 
     p = sp.add_parser("match"); p.add_argument("image"); p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--strength", type=float, default=0.8); p.add_argument("-o", "--out")
