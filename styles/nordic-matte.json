@@ -1,0 +1,78 @@
+{
+ "name": "nordic-matte",
+ "description": "Cool Scandinavian matte: desaturated, slightly cool, milky lifted blacks, soft greens and blues. Calm, minimal.",
+ "use_for": [
+  "minimal",
+  "architecture",
+  "snow",
+  "overcast",
+  "coast",
+  "lake"
+ ],
+ "avoid_for": [
+  "warm golden scenes",
+  "skin close-up"
+ ],
+ "temp": -10,
+ "tint": -2,
+ "contrast": -5,
+ "highlights": -30,
+ "shadows": 20,
+ "whites": -5,
+ "blacks": 12,
+ "clarity": 8,
+ "vibrance": -5,
+ "saturation": -28,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    32
+   ],
+   [
+    64,
+    72
+   ],
+   [
+    128,
+    130
+   ],
+   [
+    192,
+    196
+   ],
+   [
+    255,
+    240
+   ]
+  ]
+ },
+ "hsl": {
+  "orange": {
+   "sat": -10
+  },
+  "yellow": {
+   "sat": -30
+  },
+  "green": {
+   "hue": 15,
+   "sat": -30
+  },
+  "blue": {
+   "hue": -5,
+   "sat": -10,
+   "lum": 5
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 205,
+   "sat": 10
+  },
+  "highlights": {
+   "hue": 190,
+   "sat": 5
+  },
+  "blending": 60
+ }
+}

@@ -1,0 +1,92 @@
+{
+ "name": "golden-hour",
+ "description": "Warm golden glow: sunset warmth, glowing highlights, rich oranges, soft contrast; makes daylight feel like late afternoon.",
+ "use_for": [
+  "sunset",
+  "golden hour",
+  "people",
+  "autumn",
+  "beach"
+ ],
+ "avoid_for": [
+  "night/low-light",
+  "blue-hour"
+ ],
+ "temp": 18,
+ "tint": 4,
+ "contrast": 8,
+ "highlights": -30,
+ "shadows": 20,
+ "whites": 5,
+ "blacks": 4,
+ "clarity": 5,
+ "vibrance": 18,
+ "saturation": -4,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    12
+   ],
+   [
+    64,
+    66
+   ],
+   [
+    128,
+    134
+   ],
+   [
+    192,
+    200
+   ],
+   [
+    255,
+    250
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "sat": 5
+  },
+  "orange": {
+   "hue": -5,
+   "sat": 15,
+   "lum": 6
+  },
+  "yellow": {
+   "hue": -15,
+   "sat": 10
+  },
+  "green": {
+   "hue": -30,
+   "sat": -25
+  },
+  "blue": {
+   "hue": -10,
+   "sat": -15
+  }
+ },
+ "color_grade": {
+  "highlights": {
+   "hue": 40,
+   "sat": 25
+  },
+  "midtones": {
+   "hue": 30,
+   "sat": 8
+  },
+  "shadows": {
+   "hue": 20,
+   "sat": 6
+  },
+  "balance": 15,
+  "blending": 60
+ },
+ "vignette": {
+  "amount": -12,
+  "midpoint": 45,
+  "feather": 70
+ }
+}

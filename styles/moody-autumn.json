@@ -1,0 +1,110 @@
+{
+ "name": "moody-autumn",
+ "description": "Dark & moody landscape: deep olive greens, rich ochre/orange foliage, faded shadows with cool teal, warm highlights, vignette. Turns grey overcast/fog into atmosphere.",
+ "use_for": [
+  "landscape",
+  "autumn",
+  "forest",
+  "fog",
+  "overcast",
+  "lake",
+  "village"
+ ],
+ "avoid_for": [
+  "bright cheerful",
+  "people close-up"
+ ],
+ "exposure": -0.15,
+ "contrast": 18,
+ "highlights": -45,
+ "shadows": 10,
+ "whites": -12,
+ "blacks": -5,
+ "clarity": 18,
+ "texture": 10,
+ "dehaze": 8,
+ "vibrance": 10,
+ "saturation": -12,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    18
+   ],
+   [
+    40,
+    38
+   ],
+   [
+    128,
+    124
+   ],
+   [
+    210,
+    212
+   ],
+   [
+    255,
+    238
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "sat": 10,
+   "lum": -5
+  },
+  "orange": {
+   "hue": -4,
+   "sat": 22,
+   "lum": -5
+  },
+  "yellow": {
+   "hue": -18,
+   "sat": 5,
+   "lum": -12
+  },
+  "green": {
+   "hue": -45,
+   "sat": -45,
+   "lum": -25
+  },
+  "aqua": {
+   "hue": 10,
+   "sat": -40,
+   "lum": -15
+  },
+  "blue": {
+   "hue": -10,
+   "sat": -35,
+   "lum": -20
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 195,
+   "sat": 18,
+   "lum": -5
+  },
+  "midtones": {
+   "hue": 35,
+   "sat": 6
+  },
+  "highlights": {
+   "hue": 42,
+   "sat": 14
+  },
+  "balance": -10,
+  "blending": 55
+ },
+ "vignette": {
+  "amount": -25,
+  "midpoint": 40,
+  "feather": 70
+ },
+ "grain": {
+  "amount": 8,
+  "size": 20,
+  "roughness": 40
+ }
+}

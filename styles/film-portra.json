@@ -1,0 +1,109 @@
+{
+ "name": "film-portra",
+ "description": "Warm colour-negative film (Portra-400 feel): creamy highlights, lifted matte blacks, flattering skin, yellow-leaning greens, soft teal blues, fine grain.",
+ "use_for": [
+  "people",
+  "portrait",
+  "travel",
+  "daylight",
+  "golden hour",
+  "street"
+ ],
+ "avoid_for": [
+  "night/low-light"
+ ],
+ "temp": 8,
+ "tint": 2,
+ "contrast": -10,
+ "highlights": -20,
+ "shadows": 15,
+ "whites": -10,
+ "blacks": 10,
+ "clarity": -5,
+ "vibrance": 5,
+ "saturation": -8,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    22
+   ],
+   [
+    50,
+    55
+   ],
+   [
+    128,
+    132
+   ],
+   [
+    200,
+    205
+   ],
+   [
+    255,
+    242
+   ]
+  ],
+  "blue": [
+   [
+    0,
+    18
+   ],
+   [
+    128,
+    126
+   ],
+   [
+    255,
+    240
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "hue": 8,
+   "sat": -10
+  },
+  "orange": {
+   "hue": 4,
+   "sat": -5,
+   "lum": 8
+  },
+  "yellow": {
+   "hue": -12,
+   "sat": -10
+  },
+  "green": {
+   "hue": -35,
+   "sat": -35,
+   "lum": -5
+  },
+  "aqua": {
+   "hue": -10,
+   "sat": -25
+  },
+  "blue": {
+   "hue": -15,
+   "sat": -25,
+   "lum": 5
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 190,
+   "sat": 8
+  },
+  "highlights": {
+   "hue": 45,
+   "sat": 12
+  },
+  "balance": 10,
+  "blending": 60
+ },
+ "grain": {
+  "amount": 18,
+  "size": 25,
+  "roughness": 50
+ }
+}

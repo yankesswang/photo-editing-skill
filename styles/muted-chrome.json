@@ -1,0 +1,96 @@
+{
+ "name": "muted-chrome",
+ "description": "Documentary 'classic chrome' feel: subdued colour, firm shadow contrast, brick reds, deep cyan-blue skies, slightly green-warm highlights. Serious, editorial.",
+ "use_for": [
+  "street",
+  "architecture",
+  "travel",
+  "documentary",
+  "city"
+ ],
+ "avoid_for": [
+  "colourful festive"
+ ],
+ "contrast": 15,
+ "highlights": -25,
+ "shadows": -5,
+ "whites": 0,
+ "blacks": -10,
+ "clarity": 15,
+ "texture": 12,
+ "vibrance": -5,
+ "saturation": -22,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    6
+   ],
+   [
+    55,
+    44
+   ],
+   [
+    128,
+    124
+   ],
+   [
+    200,
+    205
+   ],
+   [
+    255,
+    250
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "hue": 10,
+   "sat": -15,
+   "lum": -5
+  },
+  "orange": {
+   "sat": -5
+  },
+  "yellow": {
+   "hue": -10,
+   "sat": -25
+  },
+  "green": {
+   "hue": -20,
+   "sat": -30,
+   "lum": -10
+  },
+  "aqua": {
+   "hue": 15,
+   "sat": -10
+  },
+  "blue": {
+   "hue": -15,
+   "sat": 10,
+   "lum": -25
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 210,
+   "sat": 8
+  },
+  "highlights": {
+   "hue": 60,
+   "sat": 8
+  },
+  "blending": 50
+ },
+ "vignette": {
+  "amount": -10,
+  "midpoint": 50,
+  "feather": 60
+ },
+ "grain": {
+  "amount": 10,
+  "size": 20,
+  "roughness": 50
+ }
+}

@@ -1,0 +1,98 @@
+{
+ "name": "cinematic-teal-orange",
+ "description": "Hollywood complementary grade: teal shadows & blues, warm orange skin/lights, punchy contrast, slightly crushed matte blacks.",
+ "use_for": [
+  "city",
+  "street",
+  "architecture",
+  "people",
+  "dusk",
+  "night"
+ ],
+ "avoid_for": [
+  "foliage-heavy landscapes"
+ ],
+ "contrast": 22,
+ "highlights": -35,
+ "shadows": 15,
+ "whites": 5,
+ "blacks": -12,
+ "clarity": 12,
+ "vibrance": 12,
+ "saturation": -5,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    12
+   ],
+   [
+    60,
+    52
+   ],
+   [
+    128,
+    128
+   ],
+   [
+    195,
+    204
+   ],
+   [
+    255,
+    250
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "hue": 10,
+   "sat": -5
+  },
+  "orange": {
+   "hue": -3,
+   "sat": 10,
+   "lum": 5
+  },
+  "yellow": {
+   "hue": -25,
+   "sat": -10
+  },
+  "green": {
+   "hue": 60,
+   "sat": -50,
+   "lum": -10
+  },
+  "aqua": {
+   "hue": -15,
+   "sat": 10
+  },
+  "blue": {
+   "hue": -30,
+   "sat": 5,
+   "lum": -10
+  },
+  "purple": {
+   "hue": -40,
+   "sat": -30
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 190,
+   "sat": 32,
+   "lum": -3
+  },
+  "highlights": {
+   "hue": 35,
+   "sat": 25
+  },
+  "balance": 5,
+  "blending": 45
+ },
+ "vignette": {
+  "amount": -15,
+  "midpoint": 45,
+  "feather": 65
+ }
+}

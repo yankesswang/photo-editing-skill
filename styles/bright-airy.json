@@ -1,0 +1,85 @@
+{
+ "name": "bright-airy",
+ "description": "Light & airy: bright, soft contrast, lifted shadows, pastel creamy colours, minty greens. Lifestyle / wedding / cafe look.",
+ "use_for": [
+  "people",
+  "food",
+  "interior",
+  "daylight",
+  "cafe",
+  "snow"
+ ],
+ "avoid_for": [
+  "night/low-light",
+  "dramatic sky"
+ ],
+ "exposure": 0.35,
+ "contrast": -15,
+ "highlights": -40,
+ "shadows": 40,
+ "whites": 8,
+ "blacks": 15,
+ "clarity": -8,
+ "vibrance": 10,
+ "saturation": -12,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    30
+   ],
+   [
+    64,
+    80
+   ],
+   [
+    128,
+    148
+   ],
+   [
+    192,
+    210
+   ],
+   [
+    255,
+    250
+   ]
+  ]
+ },
+ "hsl": {
+  "orange": {
+   "sat": -10,
+   "lum": 12
+  },
+  "yellow": {
+   "hue": -10,
+   "sat": -25,
+   "lum": 10
+  },
+  "green": {
+   "hue": 25,
+   "sat": -35,
+   "lum": 15
+  },
+  "aqua": {
+   "sat": -20,
+   "lum": 10
+  },
+  "blue": {
+   "hue": -10,
+   "sat": -25,
+   "lum": 15
+  }
+ },
+ "color_grade": {
+  "highlights": {
+   "hue": 50,
+   "sat": 8
+  },
+  "shadows": {
+   "hue": 220,
+   "sat": 5
+  },
+  "blending": 70
+ }
+}

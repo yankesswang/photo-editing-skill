@@ -1,0 +1,59 @@
+{
+ "name": "clean-natural",
+ "description": "Pro clean edit: true-to-life colour, crisp but not crunchy. The 'what a good photographer delivers by default' look.",
+ "use_for": [
+  "any",
+  "documentation",
+  "people",
+  "travel"
+ ],
+ "avoid_for": [],
+ "contrast": 8,
+ "clarity": 10,
+ "texture": 8,
+ "vibrance": 18,
+ "saturation": 0,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    0
+   ],
+   [
+    64,
+    60
+   ],
+   [
+    128,
+    128
+   ],
+   [
+    192,
+    197
+   ],
+   [
+    255,
+    255
+   ]
+  ]
+ },
+ "hsl": {
+  "orange": {
+   "sat": 5,
+   "lum": 5
+  },
+  "blue": {
+   "sat": 8,
+   "lum": -6
+  },
+  "green": {
+   "hue": 5,
+   "sat": -5
+  }
+ },
+ "vignette": {
+  "amount": -8,
+  "midpoint": 50,
+  "feather": 70
+ }
+}

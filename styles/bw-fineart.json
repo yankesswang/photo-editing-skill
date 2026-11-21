@@ -1,0 +1,69 @@
+{
+ "name": "bw-fineart",
+ "description": "Fine-art black & white: dark dramatic skies (blue mix down), luminous skin, strong local contrast, fine grain.",
+ "use_for": [
+  "architecture",
+  "street",
+  "dramatic sky",
+  "portrait",
+  "texture",
+  "mixed lighting/ugly colour"
+ ],
+ "avoid_for": [
+  "colour is the subject"
+ ],
+ "contrast": 25,
+ "highlights": -30,
+ "shadows": 15,
+ "whites": 12,
+ "blacks": -18,
+ "clarity": 25,
+ "texture": 15,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    8
+   ],
+   [
+    60,
+    50
+   ],
+   [
+    128,
+    128
+   ],
+   [
+    195,
+    205
+   ],
+   [
+    255,
+    252
+   ]
+  ]
+ },
+ "bw": {
+  "enabled": true,
+  "mix": {
+   "red": 10,
+   "orange": 20,
+   "yellow": 10,
+   "green": -15,
+   "aqua": -30,
+   "blue": -45,
+   "purple": -10,
+   "magenta": 0
+  }
+ },
+ "vignette": {
+  "amount": -18,
+  "midpoint": 45,
+  "feather": 65
+ },
+ "grain": {
+  "amount": 15,
+  "size": 22,
+  "roughness": 55
+ }
+}

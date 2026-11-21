@@ -1,0 +1,98 @@
+{
+ "name": "night-city",
+ "description": "Night street / indoor low-light: clean noise, glowing warm practical lights against cool blue-teal shadows, recovered lamps, rich blacks.",
+ "use_for": [
+  "night/low-light",
+  "city",
+  "interior",
+  "museum",
+  "neon",
+  "high-iso"
+ ],
+ "avoid_for": [
+  "daylight"
+ ],
+ "temp": -6,
+ "contrast": 15,
+ "highlights": -55,
+ "shadows": 18,
+ "whites": 5,
+ "blacks": -15,
+ "clarity": 10,
+ "dehaze": 5,
+ "vibrance": 15,
+ "saturation": -5,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    4
+   ],
+   [
+    50,
+    42
+   ],
+   [
+    128,
+    130
+   ],
+   [
+    200,
+    208
+   ],
+   [
+    255,
+    252
+   ]
+  ]
+ },
+ "hsl": {
+  "orange": {
+   "sat": 12,
+   "lum": 8
+  },
+  "yellow": {
+   "hue": -10,
+   "sat": 5,
+   "lum": 5
+  },
+  "green": {
+   "hue": 40,
+   "sat": -40
+  },
+  "aqua": {
+   "hue": 5,
+   "sat": 10
+  },
+  "blue": {
+   "hue": -15,
+   "sat": 10,
+   "lum": -5
+  },
+  "purple": {
+   "hue": -30,
+   "sat": -20
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 205,
+   "sat": 25,
+   "lum": -3
+  },
+  "highlights": {
+   "hue": 38,
+   "sat": 12
+  },
+  "blending": 45
+ },
+ "noise": {
+  "luminance": 30,
+  "color": 50
+ },
+ "vignette": {
+  "amount": -12,
+  "midpoint": 50,
+  "feather": 70
+ }
+}
