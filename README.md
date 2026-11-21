@@ -18,6 +18,10 @@ A Claude Code skill that culls, corrects and colour-grades your photos like a ph
 | ![](docs/images/DSC08496_compare.jpg) 普拉特夜景：深藍夜空＋乾淨暖光 | ![](docs/images/DSC08306_compare.jpg) 自然史博物館：室內低光降噪、壓住亮部 |
 | ![](docs/images/DSC08288_compare.jpg) 博物館標本：高 ISO 降噪與立體感 | |
 
+清除路人（`pe.py erase`）：自動找出畫面裡的每個人並分成主角／路人，路人用 LaMa 補上背景。下圖清掉了廣場上的 4 位遊客，右下角站在深色門口前的那位刻意保留，因為他背後的結構太複雜，補出來會穿幫。
+
+![bystander removal](docs/images/erase_DSC07991.jpg)
+
 同一張照片套上 10 種風格（`pe.py board`）：
 
 ![style board](docs/images/style_board.jpg)
@@ -32,6 +36,7 @@ A Claude Code skill that culls, corrects and colour-grades your photos like a ph
 | 修圖 | `pe.py develop` | 自動校正 ＋ 風格 ＋ 個別微調，輸出全解析度 JPG＋`.recipe.json` |
 | 檢查 | `pe.py review` / `compare` | 整批「原圖｜成品」成對總覽，Claude 逐張看、逐張修 |
 | 局部調整 | recipe 的 `masks` | 人物、天空、漸層、橢圓、亮度範圍、顏色範圍遮罩（邊緣以 guided filter 貼合）；`pe.py masks` 用紅色疊圖驗證 |
+| 清除路人 | `pe.py people` / `erase` | YOLOv8 人物分割找出每個人並編號、猜主角／路人；LaMa 補背景（逐區域、補回顆粒），清完再偵測一次補清殘影；也能寫進 recipe 的 `erase` |
 | 學風格 | `pe.py match` | 從喜歡的攝影師作品推出一組參數（只轉移調色，不轉移內容顏色） |
 | 匯出 | `pe.py xmp` | 風格或單張 recipe 匯出成 Lightroom Classic／Camera Raw 預設檔 |
 
@@ -64,6 +69,8 @@ ln -sfn "$PWD/photo-edit-skill" ~/.claude/skills/photo-edit
 依賴：Python 3.9+、numpy、opencv-python-headless、pillow。
 沒裝的話用 `uv run scripts/pe.py ...`，依賴寫在 PEP 723 header，會自動安裝。
 
+清除路人另外需要 `torch` 和 `ultralytics`（`pip install torch ultralytics`）；兩個模型（YOLOv8s-seg 24MB、LaMa 196MB）第一次使用時自動從官方 GitHub release 下載到 `~/.cache/photo-edit/models/`。
+
 ## 使用
 
 在 Claude Code 裡直接說：
@@ -82,6 +89,8 @@ python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --preview 
 python3 scripts/pe.py review /path/to/DCIM out/preview          # 前後對照
 python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --per-file fixes.json -o out/final
 python3 scripts/pe.py masks photo.jpg --mask subject --mask sky # 遮罩疊圖
+python3 scripts/pe.py people photo.jpg -o people.jpg            # 人物編號疊圖（綠＝主角、紅＝路人）
+python3 scripts/pe.py erase photo.jpg --keep 0 -o out/erased     # 只留 0 號，其他人清掉
 python3 scripts/pe.py match photo.jpg --ref ref1.jpg ref2.jpg -o my-look.json
 python3 scripts/pe.py xmp film-portra                           # Lightroom 預設檔
 ```
@@ -110,7 +119,8 @@ python3 scripts/pe.py xmp film-portra                           # Lightroom 預�
 - 輸入是 JPG：高光救回的空間比 RAW 小，已經死白的天空救不回細節。
 - 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影偵測不到時要手動指定框。
 - 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，靠 Claude 看圖判斷。
-- `.xmp` 匯出不含局部遮罩。
+- `.xmp` 匯出不含局部遮罩和清除路人。
+- 清除路人是在**生成**原本不存在的背景：小路人在石板路、牆面、天空前效果很好；人比較大、背後是門口／招牌／人群時會留下抹痕或殘影，這時應該保留那個人。紀實或證件用途的照片不要用。
 
 ## 參考
 

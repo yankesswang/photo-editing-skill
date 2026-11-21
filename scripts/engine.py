@@ -544,6 +544,12 @@ def protect_skin(out, ref_hsv, amount):
 def develop(img, recipe):
     """img: float32 sRGB HxWx3 in 0..1. Returns developed float32 sRGB."""
     r = recipe or {}
+    if r.get("erase"):  # remove bystanders first, on the untouched pixels
+        import erase as R
+        spec = r["erase"]
+        spec = spec if isinstance(spec, dict) else {"remove": spec}
+        img, _, _ = R.erase(img, spec.get("remove", "bystanders") if "keep" not in spec else {"keep": spec["keep"]},
+                            spec.get("grow", 0.10), extra=spec.get("extra"))
     img = geometry(img, r)
     h, w = img.shape[:2]
     long_side = max(h, w)

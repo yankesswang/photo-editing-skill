@@ -13,7 +13,10 @@
   pe.py review ORIG_DIR EDIT_DIR                before|after pair sheets for a whole output folder
   pe.py contact IMG... -o sheet.jpg             contact sheet
   pe.py cull DIR                                bursts -> groups, veto blur/exposure, picks.txt + sheets
+  pe.py organize DIR [--apply link]             album: events x categories, delete suggestions + HTML report
   pe.py masks IMG --mask face --mask sky        red overlay of local-adjustment masks
+  pe.py people IMG -o people.jpg                 numbered people, subject vs bystander guess
+  pe.py erase IMG --remove bystanders|2,5        remove people (inpainting) into new files
   pe.py match IMG --ref REF.jpg [-o recipe.json] derive a recipe that moves IMG toward REF's look
   pe.py xmp STYLE|RECIPE.json [-o out.xmp]      export as Lightroom preset
 """
@@ -392,6 +395,185 @@ def cmd_cull(a):
         print("  " + s_)
 
 
+def _org_tile(it, size, col, text, face=None):
+    """Thumbnail cell (3:2) + optional face inset + coloured border + caption."""
+    from PIL import Image
+    im = Image.open(it["thumb"]).convert("RGB")
+    bh = size * 2 // 3
+    im.thumbnail((size, bh))
+    t = np.asarray(im, dtype=np.float32) / 255
+    pad = np.ones((bh, size, 3), np.float32) * 0.12
+    y0, x0 = (bh - t.shape[0]) // 2, (size - t.shape[1]) // 2
+    pad[y0:y0 + t.shape[0], x0:x0 + t.shape[1]] = t
+    if face and Path(face).exists():
+        fs = bh * 11 // 20
+        f = np.asarray(Image.open(face).convert("RGB").resize((fs, fs)), dtype=np.float32) / 255
+        pad[bh - fs - 2:bh - 2, size - fs - 2:size - 2] = f
+    if col:
+        b = max(3, size // 60)
+        pad[:b], pad[-b:], pad[:, :b], pad[:, -b:] = col, col, col, col
+    return label(pad, text, size=max(11, size // 20))
+
+
+def cmd_organize(a):
+    """Album organisation: events x categories + keep / review / delete suggestions. Never touches originals."""
+    import shutil
+    import cull as C
+    import organize as O
+    files = expand(a.images)
+    if not files:
+        sys.exit("no images")
+    out = Path(a.out or (DEFAULT_OUT / (files[0].parent.name + "_organize")))
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    print(f"[1/4] scan {len(files)} frames", flush=True)
+    rows = C.scan(files, out, jobs=a.jobs)
+    print(f"[2/4] faces + eyes  [{time.time() - t0:.0f}s]", flush=True)
+    faces = O.scan_faces(files, out, jobs=min(a.jobs, 3))
+    print(f"[3/4] categories  [{time.time() - t0:.0f}s]", flush=True)
+    cats = O.load_categories(a.categories)
+    probs = O.classify([r for r in rows if "error" not in r], out, cats)
+    print(f"[4/4] bursts + verdicts  [{time.time() - t0:.0f}s]", flush=True)
+    groups = C.assess(C.group(rows, a.gap, a.strict))
+    th = json.loads(a.thresholds) if a.thresholds else None
+    items = O.rebalance_duplicates(O.judge(rows, faces, probs, groups, th))
+    ev = O.events(rows, a.event_gap)
+    zh = {k: v for k, v, _ in cats}
+    zh.update({"other": "其他"})
+    for it in items:
+        it["event"] = ev.get(it["file"], "no-date")
+        it["category_zh"] = zh.get(it["category"], it["category"])
+    items.sort(key=lambda it: (it["time"] or 0, it["file"]))
+
+    by_v = {v: [it for it in items if it["verdict"] == v] for v in ("keep", "review", "delete")}
+    for v, lst in by_v.items():
+        (out / f"{v}.txt").write_text("".join(it["file"] + "\n" for it in lst))
+    reasons = {}
+    for it in items:
+        for r_ in it["reasons"] + it["soft"]:
+            reasons.setdefault(r_, []).append(it)
+    summary = {"source": str(files[0].parent), "frames": len(items),
+               "keep": len(by_v["keep"]), "review": len(by_v["review"]), "delete": len(by_v["delete"]),
+               "reasons": {k: len(v) for k, v in sorted(reasons.items(), key=lambda kv: -len(kv[1]))},
+               "events": {}, "categories": {}}
+    for it in items:
+        e = summary["events"].setdefault(it["event"], {})
+        e[it["category_zh"]] = e.get(it["category_zh"], 0) + 1
+        summary["categories"][it["category_zh"]] = summary["categories"].get(it["category_zh"], 0) + 1
+    (out / "organize.json").write_text(json.dumps({"summary": summary, "items": items}, ensure_ascii=False, indent=1))
+
+    # ---- contact sheets (for Claude to verify): one series per delete/review reason, one per category
+    sz, per = a.thumb, a.cols * a.rows_per_sheet
+    for old in list(out.glob("del_*.jpg")) + list(out.glob("cat_*.jpg")):
+        old.unlink()
+    sheets = []
+
+    def face_for(it, reason):
+        ppl = it.get("people") or []
+        if reason in ("eyes closed", "someone's eyes closed", "looking down") and ppl:
+            ppl = sorted(ppl, key=lambda f: -min(f["blink_l"], f["blink_r"]))
+        return ppl[0]["thumb"] if ppl else None
+
+    for reason, lst in reasons.items():
+        tiles = []
+        for it in lst:
+            hard = reason in it["reasons"]
+            info = ""
+            ppl = it.get("people") or []
+            if ppl and reason in ("eyes closed", "someone's eyes closed", "looking down"):
+                f = max(ppl, key=lambda f: min(f["blink_l"], f["blink_r"]))
+                info = f" 閉眼{min(f['blink_l'], f['blink_r']):.2f}"
+            elif ppl and reason in ("missed focus", "blurry face"):
+                info = f" 臉{ppl[0]['sharp']:.2f}/景{it['frame_sharp']:.2f}"
+            elif reason == "duplicate":
+                info = f" 保留{Path(it.get('burst_keeper', '')).stem[-4:]}"
+            tiles.append(_org_tile(it, sz, (0.9, 0.15, 0.15) if hard else (0.95, 0.65, 0.1),
+                                   f"{Path(it['file']).stem[-5:]}{info}", face_for(it, reason)))
+        slug = reason.replace("'", "").replace(" ", "-")
+        for i in range(0, len(tiles), per):
+            dst = out / f"del_{slug}_{i // per + 1:02d}.jpg"
+            E.save_image(grid(tiles[i:i + per], a.cols), dst, quality=80)
+            sheets.append(str(dst))
+    if a.category_sheets:
+        for key in [k for k, _, _ in cats] + ["other"]:
+            lst = [it for it in items if it["category"] == key and it["verdict"] != "delete"]
+            tiles = [_org_tile(it, sz, None, f"{Path(it['file']).stem[-5:]} {it['cat_prob']:.2f}") for it in lst]
+            for i in range(0, len(tiles), per):
+                dst = out / f"cat_{key}_{i // per + 1:02d}.jpg"
+                E.save_image(grid(tiles[i:i + per], a.cols), dst, quality=80)
+                sheets.append(str(dst))
+    O.write_html(items, summary, out / "index.html", reason_zh=O.REASON_ZH)
+
+    # ---- optional folder tree (links/copies; originals stay where they are)
+    if a.apply != "none":
+        root = out / "album"
+        if root.exists():
+            shutil.rmtree(root)
+        for it in items:
+            src = Path(it["file"])
+            if it["verdict"] == "delete":
+                d = root / "_建議刪除" / O.REASON_ZH.get(it["reasons"][0], it["reasons"][0])
+            elif it["verdict"] == "review" and a.review_folder:
+                d = root / "_待確認" / O.REASON_ZH.get(it["soft"][0], it["soft"][0])
+            else:
+                d = root / it["event"] / it["category_zh"]
+            d.mkdir(parents=True, exist_ok=True)
+            if a.apply == "link":
+                (d / src.name).symlink_to(src)
+            else:
+                shutil.copy2(src, d / src.name)
+
+    print(f"{len(items)} frames  keep {len(by_v['keep'])}  review {len(by_v['review'])}  "
+          f"delete {len(by_v['delete'])}  [{time.time() - t0:.0f}s]")
+    for k, v in summary["reasons"].items():
+        print(f"  {O.REASON_ZH.get(k, k):<16} {v}")
+    print("categories: " + "  ".join(f"{k} {v}" for k, v in sorted(summary["categories"].items(), key=lambda kv: -kv[1])))
+    print(f"events: {len(summary['events'])}")
+    print(f"out: {out}/  organize.json index.html keep/review/delete.txt" + ("  album/" if a.apply != "none" else ""))
+    for s_ in sheets:
+        print("  " + s_)
+
+
+def cmd_people(a):
+    """List detected people with ids and roles, plus a numbered overlay (green=subject, red=bystander)."""
+    import erase as R
+    rows = []
+    for path in expand(a.images):
+        img = E.load_image(str(path), a.size)
+        ps = R.people(img)
+        print(f"{path.name}: {len(ps)} people")
+        for p in ps:
+            x, y, w, h = p["box"]
+            print(f"  #{p['id']:<2} {p['role']:<9} area {p['area'] * 100:5.2f}%  conf {p['conf']:.2f}  "
+                  f"box x{x:.2f} y{y:.2f} w{w:.2f} h{h:.2f}")
+        rows.append(label(R.overlay(img, ps), f"{path.stem}  green=subject red=bystander"))
+    if a.out:
+        E.save_image(grid(rows, min(a.cols, len(rows))), a.out, quality=85)
+        print(a.out)
+
+
+def cmd_erase(a):
+    """Write copies with people removed (originals untouched); EXIF kept. Then develop those copies."""
+    import erase as R
+    files = expand(a.images)
+    outdir = Path(a.out or (DEFAULT_OUT / (files[0].parent.name + "_erased")))
+    outdir.mkdir(parents=True, exist_ok=True)
+    if a.keep:
+        spec = {"keep": [int(x) for x in a.keep.split(",")]}
+    elif a.remove in ("bystanders", "all"):
+        spec = a.remove
+    else:
+        spec = [int(x) for x in a.remove.split(",")]
+    for f in files:
+        t = time.time()
+        img = E.load_image(str(f), a.preview) if a.preview else E.load_image(str(f))
+        extra = json.loads(a.extra) if a.extra else None
+        out, ps, removed = R.erase(img, spec, a.grow, extra=extra)
+        dst = outdir / f.name
+        E.save_image(out, dst, str(f), 95)
+        print(f"{dst}  removed {removed} of {len(ps)} people  ({time.time() - t:.1f}s)")
+
+
 def cmd_match(a):
     import match
     rec = match.match_recipe(str(a.image), [str(p) for p in expand(a.ref)], a.strength)
@@ -468,6 +650,22 @@ def main():
     p.add_argument("-j", "--jobs", type=int, default=4)
     p.set_defaults(fn=cmd_cull)
 
+    p = sp.add_parser("organize", help="album: events x categories + delete suggestions (closed eyes, focus, dupes)")
+    p.add_argument("images", nargs="+"); p.add_argument("-o", "--out")
+    p.add_argument("--gap", type=float, default=30.0, help="burst grouping: max seconds between frames")
+    p.add_argument("--strict", type=float, default=0.0, help="0..0.3: raise burst similarity bar")
+    p.add_argument("--event-gap", type=float, default=3.0, help="hours of silence that start a new event")
+    p.add_argument("--categories", help="JSON list of {key,label,prompts} replacing the built-in categories")
+    p.add_argument("--thresholds", help='JSON overrides, e.g. \'{"blink": 0.6, "face_soft": 1.1}\'')
+    p.add_argument("--apply", choices=["none", "link", "copy"], default="none",
+                   help="also build album/<event>/<category>/ (+ _建議刪除/<reason>/) as symlinks or copies")
+    p.add_argument("--review-folder", action="store_true", help="with --apply: put 'review' frames in _待確認/")
+    p.add_argument("--category-sheets", action="store_true", help="also write one contact sheet series per category")
+    p.add_argument("--thumb", type=int, default=300); p.add_argument("--cols", type=int, default=6)
+    p.add_argument("--rows-per-sheet", type=int, default=6)
+    p.add_argument("-j", "--jobs", type=int, default=4)
+    p.set_defaults(fn=cmd_organize)
+
     p = sp.add_parser("masks", help="red-overlay preview of local-adjustment masks")
     p.add_argument("image"); p.add_argument("--auto", action="store_true", help="include auto-suggested masks")
     p.add_argument("--recipe", help="recipe / .recipe.json / per-file json containing masks")
@@ -475,6 +673,20 @@ def main():
     p.add_argument("--mask", action="append", help="mask type or JSON spec (repeatable)")
     p.add_argument("--size", type=int, default=700); p.add_argument("--cols", type=int, default=3)
     p.add_argument("-o", "--out"); p.set_defaults(fn=cmd_masks)
+
+    p = sp.add_parser("people", help="detect people: ids, subject/bystander guess, overlay")
+    p.add_argument("images", nargs="+"); p.add_argument("--size", type=int, default=1600)
+    p.add_argument("--cols", type=int, default=2); p.add_argument("-o", "--out")
+    p.set_defaults(fn=cmd_people)
+
+    p = sp.add_parser("erase", help="remove bystanders (YOLOv8-seg + LaMa inpainting) into new files")
+    p.add_argument("images", nargs="+")
+    p.add_argument("--remove", default="bystanders", help="'bystanders' (default), 'all', or ids '2,3,5'")
+    p.add_argument("--keep", help="ids to keep; everyone else is removed")
+    p.add_argument("--grow", type=float, default=0.10, help="mask dilation as fraction of person height")
+    p.add_argument("--extra", help="JSON list of extra normalised boxes [[x,y,w,h],...] to remove (leftover feet etc.)")
+    p.add_argument("--preview", type=int, help="work at this long side (fast check)")
+    p.add_argument("-o", "--out"); p.set_defaults(fn=cmd_erase)
 
     p = sp.add_parser("match"); p.add_argument("image"); p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--strength", type=float, default=0.8); p.add_argument("-o", "--out")
