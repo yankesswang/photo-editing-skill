@@ -499,6 +499,9 @@ def grain(rgb, gr, scale, seed=7):
 
 
 def geometry(rgb, r):
+    rot = int(r.get("rotate", 0)) % 360  # 90/180/270 clockwise: frames whose EXIF lacks orientation
+    if rot:
+        rgb = np.ascontiguousarray(np.rot90(rgb, k=-(rot // 90)))
     ang = r.get("straighten", 0)
     if ang:
         h, w = rgb.shape[:2]

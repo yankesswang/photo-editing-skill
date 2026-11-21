@@ -71,6 +71,7 @@
 | `noise.{luminance,color}` | 雜訊減少 | 0..100 |
 | `vignette.{amount,midpoint,feather}` | 裁切後暗角 | -100..100 / 0..100 |
 | `grain.{amount,size,roughness}` | 顆粒 | 0..100 |
+| `rotate` | 旋轉 90° 倍數（順時針；相機沒記方向時） | 90 / 180 / 270 |
 | `straighten`, `crop` | 拉直、裁切 | 度；`[l,t,r,b]` 0..1 |
 | `masks` | 遮罩（局部調整） | 見 SKILL.md「局部遮罩」 |
 | `skin_protect` | （本引擎專有）膚色保護 | 0..1 |

@@ -269,8 +269,8 @@ def cmd_review(a):
             continue
         b = E.load_image(str(src[stem]), a.size)
         af = E.load_image(str(e), a.size)
-        if b.shape != af.shape:
-            af = cv2.resize(af, (b.shape[1], b.shape[0]))
+        if b.shape != af.shape:  # rotated/cropped edit: match height, keep its own aspect
+            af = cv2.resize(af, (max(1, int(af.shape[1] * b.shape[0] / af.shape[0])), b.shape[0]))
         th = a.size * 2 // 3
         pair = np.concatenate([label(b, stem, size=max(12, a.size // 20)), np.ones((b.shape[0], 4, 3), np.float32),
                                label(af, "after", size=max(12, a.size // 20))], 1)
@@ -327,11 +327,17 @@ def _thumb_tile(r, size, picked):
     pad = np.ones((bh, size, 3), np.float32) * 0.12
     y0, x0 = (bh - t.shape[0]) // 2, (size - t.shape[1]) // 2
     pad[y0:y0 + t.shape[0], x0:x0 + t.shape[1]] = t
+    if r.get("face_thumb") and Path(r["face_thumb"]).exists():
+        # face inset (bottom-right) so expressions can be judged without zooming
+        f = Image.open(r["face_thumb"]).convert("RGB")
+        fs = bh * 11 // 20
+        f = np.asarray(f.resize((fs, fs)), dtype=np.float32) / 255
+        pad[bh - fs - 2:bh - 2, size - fs - 2:size - 2] = f
     col = (0.1, 0.85, 0.2) if picked else ((0.9, 0.15, 0.15) if r["veto"] else None)
     if col:
         b = max(3, size // 60)
         pad[:b], pad[-b:], pad[:, :b], pad[:, -b:] = col, col, col, col
-    txt = f"{Path(r['file']).stem} #{r['rank']} t{r['tech']:.2f}" + (f" {','.join(r['veto'])}" if r["veto"] else "")
+    txt = f"{Path(r['file']).stem[-5:]} #{r['rank']} t{r['tech']:.2f}" + (f" {','.join(r['veto'])}" if r["veto"] else "")
     return label(pad, txt, size=max(11, size // 20))
 
 

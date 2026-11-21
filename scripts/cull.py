@@ -23,6 +23,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 THUMB = 420
+SCAN_VERSION = 2  # bump to invalidate cached scans when metrics change
 
 
 def _exif_time(im):
@@ -71,17 +72,32 @@ def _scan_one(args):
         thumb.thumbnail((THUMB, THUMB))
         tp = Path(thumb_dir) / (Path(path).stem + ".jpg")
         thumb.save(tp, quality=82)
-        faces = 0
+        faces, face_sharp, face_thumb = 0, None, None
         try:
             casc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
             s = 640 / max(h, w)
             gs = cv2.equalizeHist(cv2.resize(gray, (int(w * s), int(h * s))))
-            faces = int(len(casc.detectMultiScale(gs, 1.15, 6, minSize=(24, 24))))
+            boxes = casc.detectMultiScale(gs, 1.15, 6, minSize=(24, 24))
+            faces = int(len(boxes))
+            if faces:
+                # the frame's main face: sharpness measured ON the face (a sharp background must not
+                # rescue a blurred face) + a crop for the visual expression check
+                x, y, bw, bh = [v / s for v in max(boxes, key=lambda b: b[2] * b[3])]
+                cx, cy, side = x + bw / 2, y + bh / 2, max(bw, bh) * 1.5
+                x0, y0 = int(max(0, cx - side / 2)), int(max(0, cy - side / 2))
+                crop = arr[y0:y0 + int(side), x0:x0 + int(side)]
+                if crop.size:
+                    fg = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY), (160, 160), interpolation=cv2.INTER_AREA)
+                    face_sharp = round(float(cv2.Laplacian(fg.astype(np.float32), cv2.CV_32F).var()), 2)
+                    fp = Path(thumb_dir) / (Path(path).stem + "_face.jpg")
+                    Image.fromarray(crop).resize((220, 220), Image.LANCZOS).save(fp, quality=85)
+                    face_thumb = str(fp)
         except Exception:
             pass
         return {"file": str(path), "time": t, "hash": _dhash(gray), "sharp": round(sharp, 2),
                 "lum": round(lum, 3), "clip_hi": round(clip_hi, 4), "clip_lo": round(clip_lo, 4),
-                "faces": faces, "thumb": str(tp), "size": [int(w), int(h)]}
+                "faces": faces, "face_sharp": face_sharp, "face_thumb": face_thumb,
+                "thumb": str(tp), "size": [int(w), int(h)], "v": SCAN_VERSION}
     except Exception as e:
         return {"file": str(path), "error": str(e)}
 
@@ -92,7 +108,8 @@ def scan(files, out_dir, jobs=4, cache=True):
     cache_p = out_dir / "scan.json"
     known = {}
     if cache and cache_p.exists():
-        known = {r["file"]: r for r in json.loads(cache_p.read_text()) if "error" not in r}
+        known = {r["file"]: r for r in json.loads(cache_p.read_text())
+                 if "error" not in r and r.get("v") == SCAN_VERSION}
     todo = [str(f) for f in files if str(f) not in known]
     if todo:
         with ProcessPoolExecutor(jobs) as ex:
@@ -157,16 +174,30 @@ def assess(groups):
     all_sharp = np.array([r["sharp"] for g in groups for r in g]) if groups else np.array([1.0])
     med = float(np.median(all_sharp)) or 1.0
     for gi, g in enumerate(groups):
+        # people frames: judge sharpness on the face (relative to the burst's sharpest face)
+        fs = [r["face_sharp"] for r in g if r.get("face_sharp")]
+        # median, not max: one tighter/closer framing has far more face detail and must not
+        # make every other frame of the burst look "blurry"
+        fmax = float(np.median(fs)) if fs else None
         gmax = max(r["sharp"] for r in g)
         for r in g:
+            if fmax and r.get("face_sharp") is not None and len(fs) >= max(2, len(g) // 2):
+                face_rel = min(r["face_sharp"] / max(fmax, 1e-6), 1.25) / 1.25
+                r["sharp_basis"] = "face"
+            else:
+                face_rel = None
+                r["sharp_basis"] = "frame"
             veto = []
-            if r["sharp"] < 0.25 * med and r["sharp"] < 0.5 * gmax:
+            if face_rel is not None:
+                if face_rel < 0.3:
+                    veto.append("blurry face")
+            elif r["sharp"] < 0.25 * med and r["sharp"] < 0.5 * gmax:
                 veto.append("blurry")
             if r["lum"] < 0.05 and r["clip_lo"] > 0.6:
                 veto.append("too dark")
             if r["clip_hi"] > 0.45:
                 veto.append("blown out")
-            sharp_rel = min(r["sharp"] / max(gmax, 1e-6), 1.0)        # vs best frame of the burst
+            sharp_rel = face_rel if face_rel is not None else min(r["sharp"] / max(gmax, 1e-6), 1.0)
             sharp_abs = min(r["sharp"] / (med * 1.5), 1.0)             # vs the whole shoot
             expo = 1.0 - min(1.0, r["clip_hi"] * 4 + max(0.0, r["clip_lo"] - 0.15) * 2)
             r["tech"] = round(0.45 * sharp_rel + 0.25 * sharp_abs + 0.30 * expo - 0.5 * bool(veto), 3)
