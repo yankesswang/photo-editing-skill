@@ -33,10 +33,14 @@ A Claude Code skill that culls, corrects and colour-grades your photos like a ph
 | 選片 | `pe.py cull` | 依拍攝時間＋外觀相似度把連拍分組；否決模糊（人物照量**臉部**清晰度）、過暗、過曝；組內排名，產出附臉部特寫的總覽圖給 Claude 判斷「瞬間」 |
 | 分析 | `pe.py analyze` | 曝光統計、場景標籤（夜景／逆光／霧／人物…）、自動校正建議（中央加權或人臉測光、白平衡、高光陰影、依 ISO 降噪） |
 | 選風格 | `pe.py board` | 一張照片套全部風格並排比較 |
-| 修圖 | `pe.py develop` | 自動校正 ＋ 風格 ＋ 個別微調，輸出全解析度 JPG＋`.recipe.json` |
+| 修圖 | `pe.py develop` | 自動校正 ＋ 風格 ＋ 個別微調，輸出全解析度 JPG＋`.recipe.json`；吃 JPG／HEIC／RAW（ARW、DNG、CR3、NEF…） |
+| 整批一致 | `develop --consistent` | 依拍攝時間＋場景分組，組內共用白平衡和影調（曝光仍逐張），同一場景的照片排在一起不會一張暖一張冷 |
+| 天空 | recipe 的 `sky` | 救回洗白的天空：壓亮部、漸層、陰天加淡藍；有紋理檢查，白牆／岩石不會被當成天空 |
+| 連拍降噪 | `pe.py stack` | 手持連拍對齊（特徵＋ECC＋光流）後加權合併，移動物體自動排除；單張可用 NLM 降噪 |
 | 檢查 | `pe.py review` / `compare` | 整批「原圖｜成品」成對總覽，Claude 逐張看、逐張修 |
 | 局部調整 | recipe 的 `masks` | 人物、天空、漸層、橢圓、亮度範圍、顏色範圍遮罩（邊緣以 guided filter 貼合）；`pe.py masks` 用紅色疊圖驗證 |
 | 清除路人 | `pe.py people` / `erase` | YOLOv8 人物分割找出每個人並編號、猜主角／路人；LaMa 補背景（逐區域、補回顆粒），清完再偵測一次補清殘影；也能寫進 recipe 的 `erase` |
+| 多幀補背景 | `pe.py fill` | 有連拍或同場景另一張時，把另一張對齊後拿**真實像素**補路人擋住的地方（局部單應對齊＋色彩匹配），補不到的才用 LaMa |
 | 學風格 | `pe.py match` | 從喜歡的攝影師作品推出一組參數（只轉移調色，不轉移內容顏色） |
 | 匯出 | `pe.py xmp` | 風格或單張 recipe 匯出成 Lightroom Classic／Camera Raw 預設檔 |
 
@@ -66,10 +70,12 @@ git clone https://github.com/yankesswang/photo-edit-skill.git
 ln -sfn "$PWD/photo-edit-skill" ~/.claude/skills/photo-edit
 ```
 
-依賴：Python 3.9+、numpy、opencv-python-headless、pillow。
+依賴：Python 3.9+、numpy、opencv-python-headless、pillow。RAW 需要 `rawpy`、HEIC 直讀需要 `pillow-heif`（`pip install rawpy pillow-heif`；沒裝 pillow-heif 會自動用 macOS 的 `sips` 轉）。
 沒裝的話用 `uv run scripts/pe.py ...`，依賴寫在 PEP 723 header，會自動安裝。
 
 清除路人另外需要 `torch` 和 `ultralytics`（`pip install torch ultralytics`）；兩個模型（YOLOv8s-seg 24MB、LaMa 196MB）第一次使用時自動從官方 GitHub release 下載到 `~/.cache/photo-edit/models/`。
+
+相簿整理（`pe.py organize`：分類＋建議刪除閉眼／失焦／模糊／重複）另外需要 `mediapipe`、`torch`、`transformers`（`pip install mediapipe torch transformers`）；臉部模型（MediaPipe，約 4MB）第一次使用時下載，CLIP（`openai/clip-vit-base-patch32`，約 600MB）走 HuggingFace 快取。
 
 ## 使用
 
@@ -88,9 +94,14 @@ python3 scripts/pe.py board photo.jpg -o board.jpg              # 風格板
 python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --preview 1200 -o out/preview
 python3 scripts/pe.py review /path/to/DCIM out/preview          # 前後對照
 python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --per-file fixes.json -o out/final
+python3 scripts/pe.py develop DIR --style film-portra --consistent                     # 同場景共用白平衡／影調
+python3 scripts/pe.py develop DSC0001.ARW --style clean-natural                        # RAW 直接修
+python3 scripts/pe.py develop IMG.jpg --style clean-natural --adjust '{"sky": {"blue": 40}}'   # 陰天天空
+python3 scripts/pe.py stack burst1.jpg burst2.jpg burst3.jpg -o out/merged.jpg         # 夜景連拍疊合降噪
 python3 scripts/pe.py masks photo.jpg --mask subject --mask sky # 遮罩疊圖
 python3 scripts/pe.py people photo.jpg -o people.jpg            # 人物編號疊圖（綠＝主角、紅＝路人）
 python3 scripts/pe.py erase photo.jpg --keep 0 -o out/erased     # 只留 0 號，其他人清掉
+python3 scripts/pe.py fill photo.jpg --source burst2.jpg --keep 0 -o out/erased   # 用另一張連拍的真實背景補
 python3 scripts/pe.py match photo.jpg --ref ref1.jpg ref2.jpg -o my-look.json
 python3 scripts/pe.py xmp film-portra                           # Lightroom 預設檔
 ```
@@ -116,7 +127,8 @@ python3 scripts/pe.py xmp film-portra                           # Lightroom 預�
 ## 限制
 
 - 這是 Lightroom 演算法的近似，不是 Adobe 的引擎；同一組數字在 Lightroom 裡會接近，但不會像素級一致。
-- 輸入是 JPG：高光救回的空間比 RAW 小，已經死白的天空救不回細節。
+- JPG 輸入高光救回空間小；有 RAW 就用 RAW。RAW 解碼沒有鏡頭變形／暗角校正。
+- 連拍疊合只適合站位不動的連拍；人或相機在動的一系列照片合不起來（會退回單張，不會壞）。
 - 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影偵測不到時要手動指定框。
 - 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，靠 Claude 看圖判斷。
 - `.xmp` 匯出不含局部遮罩和清除路人。

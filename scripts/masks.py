@@ -10,6 +10,9 @@ A mask spec (all coordinates normalised 0..1, x to the right, y down):
   {"type": "subject",   "scale": 1.0}                                  # face-anchored upper-body ellipse(s)
   {"type": "sky"}                                                      # bright, smooth region connected to the top edge
   {"type": "boxes",     "boxes": [[x, y, w, h], ...], "feather": 40}   # explicit ellipses in given boxes
+  {"type": "matte",     "name": "skin"}   # iPhone semantic matte: portrait|skin|hair|teeth|glasses|sky
+                                          # (read from the <stem>.mattes/ sidecar `pe.py mattes` writes;
+                                          #  no sidecar -> empty mask, so recipes stay safe on other cameras)
 
 Common options: "invert": true, "amount": 0..1, "feather" (where relevant),
 "intersect": [spec, ...]  (Lightroom 'intersect with'), "subtract": [spec, ...].
@@ -27,6 +30,43 @@ import numpy as np
 import engine as E
 
 _FACE = None
+_MATTES = {"dir": None, "shape": None, "recipe": None}
+
+
+def set_mattes(d, pre_geom_shape, recipe):
+    """Point 'matte' masks at an image's sidecar dir; shape/recipe let us replay crop/rotate on the matte."""
+    _MATTES.update(dir=d, shape=pre_geom_shape, recipe=recipe)
+
+
+_ORIENT = {2: [cv2.ROTATE_180], 3: [cv2.ROTATE_180], 4: [], 5: [cv2.ROTATE_90_CLOCKWISE],
+           6: [cv2.ROTATE_90_CLOCKWISE], 7: [cv2.ROTATE_90_COUNTERCLOCKWISE], 8: [cv2.ROTATE_90_COUNTERCLOCKWISE]}
+_FLIP = {2: 0, 4: 0, 5: 1, 7: 1}  # applied after rotation (cv2.flip code)
+
+
+def _matte(name, h, w):
+    import json
+    from pathlib import Path
+    d = _MATTES["dir"]
+    p = Path(d) / f"{name}.png" if d else None
+    if p is None or not p.exists():
+        return np.zeros((h, w), np.float32)
+    m = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
+    try:
+        o = json.loads((Path(d) / "meta.json").read_text()).get("orientation", 1)
+    except (OSError, ValueError):
+        o = 1
+    for rot in _ORIENT.get(o, []):
+        m = cv2.rotate(m, rot)
+    if o in _FLIP:
+        m = cv2.flip(m, _FLIP[o])
+    r = _MATTES["recipe"] or {}
+    ph, pw = _MATTES["shape"] or (h, w)
+    m = cv2.resize(m, (pw, ph), interpolation=cv2.INTER_LINEAR)
+    if any(r.get(k) for k in ("rotate", "straighten", "crop")):
+        m = E.geometry(np.repeat(m[..., None], 3, -1), r)[..., 0]
+    if m.shape != (h, w):
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+    return m
 
 
 def detect_faces(img):
@@ -164,6 +204,8 @@ def build_mask(spec, img, faces=None):
                 m = np.maximum(m, _ellipse(h, w, cx, cy, bw / 2, bh / 2, spec.get("feather", 40)))
     elif t == "sky":
         m = _sky(img)
+    elif t == "matte":
+        m = _matte(spec.get("name", "portrait"), h, w)
     else:
         raise ValueError(f"unknown mask type: {t}")
     m = m.astype(np.float32)
@@ -222,3 +264,85 @@ def overlay(img, entries, faces=None):
         red = np.array([1.0, 0.1, 0.1], np.float32)
         tiles.append((img * (1 - 0.55 * m) + red * 0.55 * m, e.get("name") or e["mask"].get("type")))
     return tiles
+
+
+def sky_mask(img):
+    """Best sky mask available: the iPhone's own sky matte when the sidecar has one, else the heuristic."""
+    from pathlib import Path
+    h, w = img.shape[:2]
+    if _MATTES["dir"] and (Path(_MATTES["dir"]) / "sky.png").exists():
+        return guided_refine(_matte("sky", h, w), img)
+    m = _sky(img)
+    # texture gate, measured at a fixed 1200px: real skies (clear, overcast, hazy) have a median
+    # |Laplacian| < 0.7e-3; bright rocks / walls / snow the heuristic also grabs were 4.7e-3 and up
+    s = 1200 / max(h, w)
+    small = cv2.resize(img, (max(8, int(w * s)), max(8, int(h * s))), interpolation=cv2.INTER_AREA)
+    g = cv2.GaussianBlur(cv2.cvtColor(small.astype(np.float32), cv2.COLOR_RGB2GRAY), (0, 0), 1)
+    lap = np.abs(cv2.Laplacian(g, cv2.CV_32F))
+    ms = cv2.resize(m, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA) > 0.5
+    if not ms.any() or float(np.median(lap[ms])) > 2e-3:
+        return np.zeros((h, w), np.float32)  # not a sky
+    # per region, not per pixel: a per-pixel gate also drops the sky right next to hair / branches
+    # and leaves a bright halo there
+    n, lab = cv2.connectedComponents(ms.astype(np.uint8))
+    drop = np.zeros_like(ms)
+    for k in range(1, n):
+        reg = lab == k
+        if float(np.median(lap[reg])) > 2e-3:
+            drop |= reg
+    if drop.any():
+        keep = cv2.resize((~drop).astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+        m = m * keep
+    return guided_refine(m, img)
+
+
+def sky_enhance(img, sp, long_side):
+    """Recipe key "sky": restore a washed-out sky instead of replacing it (no fake clouds, no new light).
+
+      {"amount": 0..1,     overall strength (default 1)
+       "recover": 0..100,  pull bright sky / clouds down so cloud detail shows (default 40)
+       "grad": 0..100,     graduated darkening toward the top of the frame, inside the sky only (default 30)
+       "blue": 0..100,     colour for a white / overcast sky: a faint blue gradient, strongest at the top,
+                           only where the sky is near-neutral and not on bright cloud cores (default 0 = off)
+       "sat": -100..100,   saturation of an already blue sky (default 15)
+       "dehaze": 0..100}   haze removal inside the sky (default 10)
+    The sky must be a real share of the frame (>3%) or nothing happens."""
+    amt = float(sp.get("amount", 1.0))
+    if amt <= 0:
+        return img
+    m = sky_mask(img)
+    if m.mean() < 0.03:
+        return img
+    h, w = img.shape[:2]
+    out = img.copy()
+    lab = cv2.cvtColor(np.clip(img, 0, 1).astype(np.float32), cv2.COLOR_RGB2LAB)
+    L, A, B = lab[..., 0] / 100, lab[..., 1], lab[..., 2]
+    chroma = np.sqrt(A * A + B * B)
+    sel = m > 0.5
+    sky_chroma = float(np.median(chroma[sel])) if sel.any() else 0.0
+    yy = np.linspace(0, 1, h, dtype=np.float32)[:, None]
+    ys = np.nonzero(sel.any(1))[0]
+    horizon = (ys.max() + 1) / h if len(ys) else 0.5
+    t = np.clip(1 - yy / max(horizon, 1e-3), 0, 1)  # 1 at the top edge, 0 at the sky's lowest row
+
+    rec = sp.get("recover", 40) / 100 * amt
+    grad = sp.get("grad", 30) / 100 * amt
+    newL = L - rec * 0.35 * E.smoothstep(0.55, 1.0, L) * (L - 0.45)
+    newL = newL * (1 - grad * 0.22 * t)
+    blue = sp.get("blue", 0) / 100 * amt
+    if blue and sky_chroma < 12:  # white / overcast sky only; a blue sky already has its colour
+        core = 1 - E.smoothstep(0.88, 0.98, L)  # leave bright cloud cores white
+        neutral = 1 - E.smoothstep(6, 16, chroma)
+        k = blue * neutral * core * (0.45 + 0.55 * t)
+        A = A + k * (-3.0 - A * 0.5)
+        B = B + k * (-16.0 - B * 0.5)
+    sat = sp.get("sat", 15) / 100 * amt
+    if sat and sky_chroma >= 12:
+        A, B = A * (1 + sat), B * (1 + sat)
+    lab2 = np.stack([np.clip(newL, 0, 1) * 100, A, B], -1).astype(np.float32)
+    res = np.clip(cv2.cvtColor(lab2, cv2.COLOR_LAB2RGB), 0, 1)
+    dh = sp.get("dehaze", 10) * amt
+    if dh:
+        res = E.dehaze(res, dh)
+    out = img * (1 - m[..., None]) + res * m[..., None]
+    return np.clip(out, 0, 1).astype(np.float32)

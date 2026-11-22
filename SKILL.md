@@ -1,6 +1,6 @@
 ---
 name: photo-edit
-description: 把照片修成攝影師在 Lightroom 調過風格的成品。大量照片先選片（連拍分組、模糊／曝光否決、挑最好的一張），逐張分析（曝光／白平衡／高光陰影／雜訊）先校正，再套上攝影師風格（電影感、底片 Portra、暗調秋景、黑白、夜景城市、日系明亮…）或從參考照片學風格，必要時用局部遮罩（主體提亮、天空、漸層、顏色範圍）；Claude 會實際看前後對照圖修正，輸出全解析度 JPG＋可匯入 Lightroom 的 .xmp 預設檔。Use when the user wants photos culled / selected, edited / color graded / retouched "like a photographer", Lightroom-style presets, batch editing a folder or SD card, matching a reference photo's look, or says 選片、修圖、調色、套濾鏡、修成攝影師風格、Lightroom 預設.
+description: 把照片（JPG／HEIC／RAW）修成攝影師在 Lightroom 調過風格的成品。大量照片先選片（連拍分組、模糊／曝光否決、挑最好的一張），逐張分析（曝光／白平衡／高光陰影／雜訊）先校正，再套上攝影師風格（電影感、底片 Portra、暗調秋景、黑白、夜景城市、日系明亮…）或從參考照片學風格，必要時用局部遮罩（主體提亮、天空、漸層、顏色範圍）、救回洗白的天空、整批同場景色調一致、夜景連拍疊合降噪；人像可用 iPhone 原檔自帶的皮膚／頭髮／牙齒遮罩做輕微美顏（磨皮、去黑眼圈、牙齒美白、稍微瘦臉）；Claude 會實際看前後對照圖修正，輸出全解析度 JPG＋可匯入 Lightroom 的 .xmp 預設檔，也可直接匯入 macOS 照片 App（同步 iCloud）。Use when the user wants photos culled / selected, edited / color graded / retouched "like a photographer", Lightroom-style presets, batch editing a folder or SD card, matching a reference photo's look, RAW files (ARW/DNG/CR3/NEF), noisy night shots / bursts, consistent look across a set, organising an album (categories by event/content, which photos to delete: closed eyes, missed focus, blur, duplicates), or says 選片、修圖、調色、套濾鏡、修成攝影師風格、Lightroom 預設、相簿整理、照片分類、哪些照片該刪、閉眼、沒對到焦、存到 iCloud 照片、匯入照片 App、修人像、美顏、磨皮、瘦臉、iPhone 照片、從照片 App 找某次旅行的照片.
 ---
 
 # photo-edit — 攝影師風格修圖
@@ -67,6 +67,24 @@ pe.py cull "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_cul
   - 第二輪用每張 64 格的高密度總覽（`pe.py contact`）做最終取捨，標準：每個地點留最好的 1–3 張、刪同角度重複與純記錄照、動物園／博物館這類重複主題砍最多。
   - 相機直拿但沒記方向的照片會橫躺，加 `"rotate": 90`（或 270）轉正。
 
+### 0.5 從 macOS「照片」圖庫取片（使用者說「我照片裡的某次旅行」）
+- 圖庫資料庫（`Photos.sqlite`）被 macOS 權限擋住，讀不到也複製不到 → 改用 AppleScript／JXA 控制「照片」App。
+- 找日期範圍：JXA 一次讀全部 `mediaItems` 的 `date()`、`location()`、`filename()`（2.6 萬張約 1 分鐘），用 GPS 範圍＋日期鎖定旅程；
+  同一張常出現兩筆（同檔名同時間），先用「檔名＋時間」去重。
+- 匯出：`tell application "Photos" to export {media item id "..."} to (POSIX file DIR as alias)`，**一定包 `with timeout of 1800 seconds`**：
+  原檔只在 iCloud 時要先下載，預設 2 分鐘逾時會讓整批靜默失敗。加 `with using originals` 才拿得到 iPhone 遮罩（見「人像修圖」）。
+- **硬碟剩約 5–6GB 時照片 App 會停止從 iCloud 下載，export 回報成功卻沒有檔案**；下載回來的原檔留在圖庫裡會吃空間。
+  所以不要一次匯出全部：使用者偏好的模式是「每批約 100 張：匯出 → 選片 → 修圖 → 匯入 iCloud 相簿 → 刪本機」，本機只留當批。
+- 先匯出 2048px 縮圖選片，選中的再匯出全解析度。HEIC 可以直接丟給 `pe.py`（有裝 `pillow-heif` 直接讀，沒裝自動用 `sips` 轉）。
+
+### 0.8 RAW 檔（ARW / DNG / CR3 / NEF / RAF…）
+有 RAW 就用 RAW：`pe.py` 的所有指令都直接吃 RAW（需要 `pip install rawpy`），高光、陰影能救的範圍比 JPG 大很多。
+- 解法：rawpy（LibRaw）用相機白平衡、線性 16-bit 解出，再套一條「相機基準曲線」：**以 RAW 內嵌的相機 JPG 為準**對齊中間調亮度
+  （每台相機測光習慣不同，內嵌 JPG 就是相機認為的「正常」），再加一層輕微 S 曲線＋飽和度（類似 Lightroom 的 Adobe Color）。
+- EXIF（ISO、鏡頭、時間）從內嵌 JPG 讀，ISO 降噪、`--consistent` 分組都照常運作。預覽（`--preview`／分析）用 half-size 解碼，很快；全解析度 24MP 約 15–20 秒。
+- **沒有鏡頭校正**：相機 JPG 會修變形和暗角，rawpy 不會。廣角的建築直線若有桶狀變形，用 `straighten`／`crop` 修，或接受。
+- RAW＋JPG 都有時，選片用 JPG（快），修圖用同名的 RAW。
+
 ### 1. 了解這批照片
 ```bash
 pe.py contact @final.txt -o /tmp/.../contact.jpg --cols 8   # 或目錄、glob
@@ -98,6 +116,8 @@ pe.py compare ORIG v1.jpg v2.jpg --labels "orig|v1|v2" --sep "|" -o /tmp/.../cmp
 - **日落剪影**：自動校正會把剪影提亮成灰藍色 → `{"shadows": -55, "blacks": -20}`，剪影要黑。
 - **鎢絲燈餐廳**：夜景風格的暖燈加強會讓整張變黃濾鏡 → `{"temp": -10, "skin_protect": 0.8, "hsl": {"yellow": {"sat": -22}, "orange": {"sat": -10}}}`。
 - **黃昏戶外**容易帶紫：`{"tint": -7}`。
+- **iPhone 照片的黑衣服變藍／暗紅色塊**：iPhone 把黑位壓到接近 0，提陰影時舊版引擎用倍率乘 RGB，倍率上百就把雜訊放大成色塊（已修：色差最多放大 1.5 倍）；
+  底片風格的藍色曲線抬黑位也會讓黑衣變藏青，iPhone 照片要覆寫成中性藍色曲線。
 
 有問題就寫個別微調檔（key 用檔名或去副檔名的 stem）：
 ```json
@@ -108,6 +128,16 @@ pe.py compare ORIG v1.jpg v2.jpg --labels "orig|v1|v2" --sep "|" -o /tmp/.../cmp
 ```
 `pe.py develop ... --per-file fixes.json` 重新渲染，再看一次（遵守回合上限）。
 整批都同一個問題（例如都太暖）→ `--adjust '{"temp": -8}'` 一次修全部。
+
+**整批一致（`--consistent`，交件前建議都加）**：自動校正是逐張算的，同一個場景裡相鄰兩張會一張比較暖、一張陰影拉比較多，排在相簿裡就不像同一組。
+```bash
+pe.py develop @final.txt --style STYLE --consistent            # --group-gap 600：相隔超過幾秒就分新組
+```
+- 分組：依拍攝時間排序，相隔 >10 分鐘、日夜切換、或整張平均顏色／亮度跳很大（Lab 距離 >18）就切一組；會印出每組張數、時間、色溫範圍。
+- 組內共用：`temp`、`tint`、`highlights`、`shadows`、`whites`、`blacks`、`contrast`、`dehaze` 取組內中位數。
+- **曝光仍逐張**（相機每張曝光本來就不同），逆光人物的局部提亮遮罩也逐張保留。`.recipe.json` 會記 `group`。
+- 實測（餐廳 14 張）：同組亮部校正原本 -35～-105 → 統一 -65，陰影 43～66 → 63。
+- 個別微調（`--per-file`）會疊在同步值上面，所以同步後仍可以單獨修某一張。
 
 ### 4. 全解析度輸出
 ```bash
@@ -120,6 +150,18 @@ pe.py xmp OUT/DSC07761_moody-autumn.recipe.json --name "Hallstatt fog"
 
 交件時附上：輸出資料夾、選片結果（幾張中留幾張）、用了哪個風格與理由、哪幾張有個別修正或遮罩（各修了什麼）、前後對照總覽圖。
 
+### 6. 存到 iCloud 照片（使用者要求時）
+使用者說「存到照片／iCloud／手機上看」時，把成品匯入 macOS「照片」App；有開 iCloud 照片就會自動同步。
+```bash
+pe.py photos OUT_DIR --dry-run        # 先看：每個含照片的資料夾＝一本相簿（以資料夾命名）、各幾張
+pe.py photos OUT_DIR                  # 匯入；--album NAME 指定相簿名
+```
+- 只匯入影像檔，`.recipe.json`／`.xmp` 不會進去。
+- 每 25 張一批（`--batch`）：一次丟 177 張曾讓 Photos 回 -609 連線錯誤，分批就正常；失敗的批次會自動重試。
+- 相簿裡已有同檔名就跳過，所以中途失敗直接重跑即可，不會重複；最後會核對相簿張數，缺的會列出並以非 0 結束。
+- 第一次跑 macOS 會問是否允許控制「照片」，要使用者按允許。能不能上 iCloud 取決於「照片 > 設定 > iCloud」，交件時提醒一句。
+- 這是寫入使用者照片圖庫的動作（從圖庫刪要使用者手動），**只在使用者要求時做**，不要修完圖就自動匯入。
+
 ### 5. 從參考照片學風格（使用者給了喜歡的攝影師作品）
 ```bash
 pe.py match TARGET.jpg --ref REF1.jpg REF2.jpg -o my-look.json --strength 0.8
@@ -127,6 +169,24 @@ pe.py develop IMGS... --style my-look.json --preview 1200
 ```
 轉移的是調色，不是內容：以中位數為軸的對比形狀、黑白點（褪色感）、近中性色像素的亮暗部色偏、整體飽和度。
 參考圖給 2–5 張同一系列的效果最好。先描述參考圖「可轉移的特徵」與「只屬於那個場景的光線／內容」，不要把參考圖裡的藍天、橘葉當成調色。
+
+## 天空（`sky`：救回洗白的天空，不換天）
+```bash
+pe.py develop IMG --style STYLE --adjust '{"sky": {"blue": 40}}'    # 陰天白天空 → 淡藍漸層
+```
+| key | 作用 | 預設 |
+|---|---|---|
+| `amount` | 整體強度（跟著 `--strength` 縮放） | 1 |
+| `recover` | 壓暗天空亮部，讓雲的層次出來 | 40 |
+| `grad` | 天空範圍內、越往上越暗的漸層（像漸層減光鏡） | 30 |
+| `blue` | 白／陰天天空加一點藍，上方較濃；雲的亮核心不染色；已經是藍天就不作用 | 0（關） |
+| `sat` | 已經是藍天時加飽和 | 15 |
+| `dehaze` | 天空範圍內去霧 | 10 |
+- 遮罩：iPhone 有 `sky` matte（`.mattes/sky.png`）就用它；否則用啟發式天空遮罩，並加**紋理檢查**：
+  真正的天空（晴、陰、霧）紋理中位數 <0.7e-3，白色岩石／牆面／雪 ≥4.7e-3 → 整塊超過 2e-3 就不算天空，什麼都不做。
+- 實測失敗紀錄：沒有紋理檢查時，狐獴照上方的白色石頭被當成天空壓暗染藍；逐像素紋理門檻則會在頭髮旁留下一圈沒處理的亮光暈 → 現在改成整塊區域判斷。
+- 刻意不做：換天空、加假雲、改光線方向。陰天就是陰天，`blue` 只是讓它不要像白紙；超過 50 看起來就假。
+- 一定要裁 100% 看天空和頭髮／樹枝交界有沒有光暈。
 
 ## 局部遮罩
 
@@ -148,6 +208,7 @@ recipe 的 `masks` 是一串局部調整，每個 = 遮罩 + 局部滑桿：
 | `luminance` | 亮度範圍（0–1）；只動暗部或亮部 |
 | `color` | 色相範圍；只動某個顏色（綠草太螢光、水太綠） |
 | `boxes` | 手動指定的人物框 `[x,y,w,h]`（偵測失敗時用） |
+| `matte` | iPhone 自帶的語意遮罩：`{"type": "matte", "name": "skin"}`（portrait/skin/hair/teeth/glasses/sky；需 `pe.py mattes` 的 sidecar，見「人像修圖」） |
 
 共通選項：`invert`、`amount`、`feather`、`intersect: [...]`、`subtract: [...]`。人物／天空遮罩預設會做邊緣貼合（guided filter）。
 局部滑桿：temp、tint、exposure、contrast、highlights、shadows、whites、blacks、clarity、texture、dehaze、saturation、vibrance、hsl。
@@ -169,6 +230,76 @@ pe.py masks IMG --mask subject --mask sky     # 快速試
 - 主體不夠突出 → `subject` 提 0.3–0.6EV ＋ `subject` 的 `invert` 降飽和或降曝光 10–20%。
 - 綠色太螢光但只想動草地 → `color` hue≈90–110 降飽和，再 `intersect` 下半部 `linear`。
 
+## 人像修圖（iPhone 照片優先）
+
+**原則：人像只微調。** 實跑時使用者依序退件：底片風（臉太黃）→ 自然風（「還是怪」）→ 把臉拉回原圖色調（「變醜」）→ 磨皮美白（「只是變白」）→ 瘦臉＋大眼＋修容＋去黑眼圈全開（「修壞了，好醜」）；
+最後接受的是「**臉以 iPhone 原圖為準、五官不動、只輕微磨皮／淡化黑眼圈／牙齒去黃／稍微瘦臉，背景調鮮豔**」。
+使用者覺得「原圖的人最好看」時，任何讓臉看起來「被處理過」的改動都是扣分。
+
+### 為什麼 iPhone 人像會被全域調色修壞
+iPhone 拍照時已經用語意遮罩對臉做過局部色調。全域的高光／陰影／對比／暖色再套一次，臉就被推亮或推暗、偏黃：
+實測同一組風格讓一張臉亮度 0.79→0.66（暗 16%）、另一張 0.69→0.86（亮 25%、泛紅）。膚色色相反而沒跑（都在示波器膚色線 ~123° 附近）。
+所以人像要做的不是「調膚色」，而是**讓臉不被全域調整拖走**，再在皮膚範圍內做很輕的修飾。
+
+### iPhone 檔案自帶的遮罩（`pe.py mattes`）
+iPhone 的 HEIC／JPG 原檔裡存了 ImageIO 輔助影像：`portrait`（人物）、`skin`、`hair`、`teeth`、`glasses`、`sky`（JPG 沒有 sky），還有深度圖、HDR 增益圖；解析度約原圖一半，精度到髮絲，比本 skill 的「臉＋橢圓」人物遮罩準得多。
+```bash
+pe.py mattes IMG_7532.HEIC -o DIR      # -> DIR/IMG_7532.mattes/{portrait,skin,hair,teeth,glasses,sky}.png + meta.json
+```
+- 需要 macOS＋`swiftc`（第一次會編譯 `scripts/apple_mattes.swift` 到 `~/.cache/photo-edit/`）。
+- 遮罩是感光元件方向，`meta.json` 記 EXIF orientation，讀取時自動轉正；裁切／旋轉也會跟著套到遮罩上。
+- **sidecar 規則**：`develop` 找 `<影像 stem>.mattes/`（跟影像同資料夾）。影像改過名就把 `.mattes` 資料夾改成同樣的 stem。
+- 只有「照片」App 匯出**原檔**（`with using originals`）才有遮罩；照片 App 一般匯出的 JPG 會把它們丟掉。實際做法：原檔抽遮罩，像素用 `sips -s format jpeg` 轉出來或照片 App 一般匯出的 JPG（兩者幾何相同），抽完就刪原檔。
+- 遮罩也能當局部遮罩用：`{"type": "matte", "name": "skin"}`（沒有 sidecar 時是空遮罩，對其他相機安全）。
+
+### 人像參數（`vivid-iphone` 已內建定案值）
+```bash
+pe.py develop IMG.jpg --style vivid-iphone --no-auto      # 一定加 --no-auto：iPhone 的曝光不要重算
+```
+| recipe key | 作用 | 定案值 |
+|---|---|---|
+| `skin_anchor.amount` | 皮膚遮罩內把 L／色度／色相拉回相機原本的膚色 | 0.9 |
+| `skin_anchor.teeth` | 牙齒去黃＋微提亮（`teeth` 遮罩） | 0.5 |
+| `skin_anchor.beauty.smooth` / `texture` | 頻率分離式磨皮：去中頻瑕疵、保留毛孔（texture＝保留比例） | 0.35 / 0.8 |
+| `skin_anchor.beauty.even` | 膚色均勻（只在皮膚內模糊顏色，不吃頭髮） | 0.25 |
+| `skin_anchor.beauty.glow` / `rosy` | 皮膚提亮（L*）／加粉紅（a*） | 1 / 0 |
+| `portrait.undereye` | 眼下比臉頰暗的部分提亮到臉頰亮度與顏色，睫毛線保護 | 0.4 |
+| `portrait.slim` | 臉頰→下顎角水平內收（1＝臉寬 6%）；下巴點不動 | 0.2 |
+| `portrait.contour` / `eyes` | 加深減淡修容／大眼 | **0（使用者退件）** |
+
+`portrait` 用 MediaPipe FaceLandmarker 478 點（`scripts/portrait.py`，模型與 `organize` 共用）；臉寬小於長邊 6% 的不處理。
+
+### 失敗紀錄（不要再犯）
+- **瘦臉把下巴推尖**：連下巴附近的點一起往中心推，兩側內收就擠成尖 V 臉，下巴下的衣領也被拉歪 → 只推臉頰到下顎角、只水平推、半徑 0.13×臉寬。`slim` 0.4 以上就看得出修過。
+- **全開美顏（磨皮 0.7＋glow＋rosy＋修容＋大眼）**：臉變白變平、像 App 濾鏡 → 使用者直接說醜。強度一律從定案值起跳，往上加要先問。
+- **底片風格的藍色曲線**（黑位 0→18）在 iPhone 照片上把黑衣變藏青 → iPhone 照片不要用會抬藍色黑位的風格，或覆寫成中性藍色曲線。
+- **對比**：使用者說「看起來怪」時，先拿原圖並排問「哪一欄最好看」，不要再猜下一個風格；選「原圖」就代表要回到 iPhone 的樣子再微調。
+
+### 驗證
+- 每次都要裁 100% 臉部「原圖｜修後」並排看：髮際、帽緣、衣領（瘦臉形變）、眼睛周圍（去黑眼圈不能吃到睫毛）、牙齒。
+- 確認沒形變：輪廓邊緣跟原圖的重疊率（Canny）應在 0.9 以上；修後「看起來比較瘦」有時只是背景對比變強。
+- 交件時把臉部放大對照圖傳給使用者，人像的好壞只有使用者能判斷。
+
+## 夜景／高 ISO 降噪
+
+**有連拍就疊合（`pe.py stack`），沒有才用單張降噪。**
+```bash
+pe.py stack F1.JPG F2.JPG F3.JPG -o OUT/merged.jpg     # 對齊＋合併 → 一張低雜訊的照片
+pe.py develop OUT/merged.jpg --style night-city          # 再照常修圖（降噪可以調低）
+```
+- 流程：挑最清晰的一張當參考 → 每張用 ORB 特徵＋單應矩陣粗對齊、ECC 精修 → 曝光增益對齊參考（連拍時相機每張自動測光）→
+  DIS 光流修掉剩下的視差（室內近景／遠景會殘留 1–6px）→ 逐像素加權平均，跟參考差太多的地方（移動的人、車、水面）權重歸零、退回參考張。
+- 輸出會印每張的 `static %`（被採用的像素比例）和雜訊前後值。實測（室內咖啡廳 ISO 2000，3 張）：雜訊 0.0069 → 0.0038（−45%，理論極限 −42%～−58%），帽子 logo、雕花沒有鬼影。
+- **只適合真的連拍**（站位不動、幾秒內、構圖幾乎一樣）。人在轉頭、換姿勢、相機有移動的「一系列照片」不行：
+  實測一組黃昏河景 5 張，靜止像素只有 3–6% → 等於沒合併（不會壞，但沒效果）。`static %` < 30% 就別用。
+- 找連拍：`cull` 的連拍組，或 EXIF 時間在 5 秒內、ISO ≥1600 的連號照片。
+
+**單張：NLM 降噪**（比預設 bilateral 強、保邊，24MP 約多 10 秒）
+```json
+{"noise": {"luminance": 45, "color": 50, "method": "nlm"}}
+```
+只用在夜景／高 ISO；白天照片用 NLM 會把細紋理抹掉。
+
 ## 清除路人
 
 ```bash
@@ -182,7 +313,8 @@ pe.py erase IMG --preview 1200 -o /tmp/.../erased # 快速試；--remove 2,5 指
  "DSC07038": {"erase": {"keep": [0]}}}
 ```
 - 偵測：YOLOv8 人物分割（固定在 1920px 上偵測，預覽和全解析度的編號一致）；清完會再偵測一次，把清了一半的殘影或漏抓的人補清。
-- 補背景：LaMa inpainting，逐區域裁切（含周圍脈絡）、≤1024px 推論、羽化貼回，並補回顆粒避免「補過的地方特別光滑」。
+- 補背景：LaMa inpainting，逐區域裁切（含周圍脈絡，大洞的脈絡有上限以保留解析度）、≤2400px 推論、羽化貼回，並補回少量顆粒避免「補過的地方特別光滑」。
+- 遮罩擴張跟人物高度成正比但有絕對上限（長邊 1.2%）：佔半個畫面的人不會連旁邊的傘、牆一起吃掉。
 - 模型第一次使用時自動下載到 `~/.cache/photo-edit/models/`（約 230MB）。
 
 使用原則（**這是在發明不存在的背景**，所以比調色更要小心）：
@@ -197,13 +329,54 @@ pe.py erase IMG --preview 1200 -o /tmp/.../erased # 快速試；--remove 2,5 指
 - 影子、倒影、被路人拿著的東西（行李箱、腳踏車）不會一起清掉，要另外處理或接受。
 - 交件時說明哪幾張清過路人。紀實、新聞、證件用途的照片不要清。
 
+### 有連拍／同場景另一張時：用真實像素補（`pe.py fill`，優先於 `erase`）
+路人在 B 張擋住的地方，在幾秒前後的 A 張常常是空的。把 A 對齊到 B 再把那塊複製過來，補的是**真的背景**，不是模型猜的。
+```bash
+pe.py fill TARGET.JPG --source OTHER1.JPG OTHER2.JPG --keep 0 -o OUT_DIR   # 編號同 pe.py people；--remove 2,3 也可
+```
+- 流程：兩張都偵測人 → 只用靜態背景（人遮掉）的 ORB 特徵＋RANSAC 求單應矩陣；先在洞周圍做局部擬合（處理視差，近景跟遠景不在同一平面），特徵不夠才退回全域；
+  每個要補的像素取第一個「有涵蓋、且該處在來源張沒有人」的來源 → 在洞外一圈做色彩匹配 → 羽化貼上；所有來源都補不到的剩餘部分才用 LaMa。
+- 輸出會印每個來源的 `fit`（local/global）、`inliers`、`filled px`、`ring_diff`（洞外一圈與目標的平均差，越小代表對得越準，>0.05 要懷疑），以及 `LaMa fallback px`。
+- 找來源：`cull` 的連拍組、或時間差幾秒到一兩分鐘、站位沒變的照片。來源張的路人要站在**別的位置**，否則同一塊兩張都被擋，只能退回 LaMa。
+- 輸出有 `WARNING` 就不要交件：洞裡又偵測到人（來源張的人站在同一個位置被貼過來）、真實像素 <50%、或 ring_diff >0.05。
+  實測反例：兩張都坐在同一位置的主角硬要清 → 貼來另一張的臉＋一大塊 LaMa 灰斑。**fill 只適合「人有移動」的路人**，不用來清主角。
+- 檢查重點：直線（欄杆、窗框、地磚縫）在洞邊有沒有錯位；光線變了（雲遮日）時補塊會亮度不同；會動的東西（水面、樹葉、旗子）補出來可能不連續，可以接受就好。
+- 手持連拍的視差小，效果最好；換了站位的兩張、廣角近景的視差大，局部擬合也對不齊 → 改用 `erase` 或保留路人。
+
+## 相簿整理（分類＋建議刪除）
+
+使用者要「整理相簿」「分類」「哪些可以刪」而**不一定要修圖**時用這個；要修圖的話它也可以取代第 0 步選片。
+```bash
+pe.py organize "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_organize
+pe.py organize DIR --apply link          # 另外建 album/<日期活動>/<類別>/ 與 _建議刪除/<原因>/（捷徑，不搬原檔）
+pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，用來抽查分類
+```
+- **分類**：活動＝拍攝時間間隔超過 3 小時或跨日就切一段（`--event-gap`）；內容＝CLIP 零樣本分類（人像、合照、自拍、風景、城市街景、建築地標、室內、展覽藝術、美食、動物、花草、交通、夜景、記錄翻拍）。
+  有真人臉（BlazeFace＋臉部網格都確認）且臉夠大的，一律歸人像／合照。類別可用 `--categories my.json` 換掉（`[{"key","label","prompts":[...]}]`）。
+- **建議刪除（紅框，`delete.txt`）**：閉眼（主角或 ≤2 人的照片）、失焦（臉糊但背景清楚）、整張模糊／手震（兩種量測都同意才算）、太暗救不回、大面積過曝、誤拍、連拍重複（跟保留的那張幾乎一樣、20 秒內）。
+- **待確認（橘框，`review.txt`）**：多人照裡有人閉眼、眼睛半閉／往下看、臉被裁切、相似照（同場景換了角度）、只有單一量測認為模糊。
+- 連拍組裡，如果技術排名第一的那張閉眼或失焦，會改留組內最好的「乾淨」那張。
+- 輸出：`index.html`（離線報告，建議刪除預設打勾，取消＝留下，可匯出 `delete_confirmed.txt`）、`organize.json`、`keep/review/delete.txt`、`del_<原因>_NN.jpg` 總覽圖（附臉部特寫與數值）。
+- 1600 張約 15 分鐘（首次會下載 CLIP 約 600MB、臉部模型約 4MB）；結果有快取，重跑只算新照片。門檻可用 `--thresholds '{"blink": 0.55}'` 調。
+
+**Claude 一定要看 `del_*.jpg` 再交件**，數字只是初篩：
+- 閉眼：臉部特寫裡眼睛真的閉上才算；笑到瞇眼、往下看手機是常見誤判，好看的就從清單移除。
+- 失焦／模糊：霧、黃昏剪影、夜景本來就細節少，不是模糊；有疑慮就裁 100% 看臉。
+- 連拍重複：確認保留的那張（`keep####`）真的比較好；表情更好的話就換。
+- 實跑經驗（1622 張旅行照 → 建議刪 304、待確認 551、保留 767；首次 17 分鐘，重跑 11 秒）：
+  - 閉眼分數 ≥0.5 的 8 張全是真的閉眼或低頭看手機；0.38–0.5 多是笑到瞇眼，所以只放待確認。
+  - 臉部偵測信心 <0.75 幾乎都是雕像、裝飾、礦石，已排除；≥0.75 仍會有畫像／雕像的臉，看到就忽略。
+  - 霧、陰天湖景、黃昏剪影的細節分數仍高（5–10），不會被當成模糊；真正手震／整張失焦的約 1.5–2.5。
+  - 相機時鐘沒設的話，活動日期會錯（這張卡顯示 2014 年），分段仍然正確。
+- **絕不自己刪檔。** 交件時報告「N 張中建議刪 X 張（各原因幾張）、待確認 Y 張」並附 `index.html` 路徑；使用者確認後才依 `delete_confirmed.txt` 處理，且只移到垃圾桶（`mv` 到 `~/.Trash`），不用 `rm`。
+
 ## 自訂／新增風格
 `styles/*.json` 一檔一風格，格式見 `references/editing-guide.md` 的「recipe 欄位」。
 新風格建議先在 3 種場景（人像、風景、夜景）做 board 確認沒有翻車再存。
 
 ## 限制（老實說）
 - 這是 Lightroom 演算法的近似，不是 Adobe 的引擎；同一組數字在 Lightroom 裡會接近但不會像素級一致。
-- 輸入是 JPG（相機已經套過曲線）：高光救回的空間比 RAW 小得多，已經死白的天空救不回細節。
+- JPG 輸入（相機已經套過曲線）高光救回空間小，已經死白的天空救不回細節；有 RAW 就用 RAW（但沒有鏡頭變形／暗角校正）。
 - 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影、很小的人可能偵測不到，這時用 `boxes` 手動指定。
 - 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，要靠 Claude 看圖判斷。
 - `xmp` 匯出不包含局部遮罩和清除路人（Lightroom 預設檔的遮罩格式不同），只匯出全域設定。

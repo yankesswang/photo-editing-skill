@@ -17,16 +17,18 @@ Recipe keys (all optional; missing = neutral):
                 "balance":-100..100, "blending":0..100}
   bw           {"enabled":true, "mix":{band: -100..100}}
   sharpen      {"amount":0..150, "radius":0.5..3, "masking":0..100}
-  noise        {"luminance":0..100, "color":0..100}
+  noise        {"luminance":0..100, "color":0..100, "method": "bilateral"|"nlm"}
   vignette     {"amount":-100..100, "midpoint":0..100, "feather":0..100}
   grain        {"amount":0..100, "size":0..100, "roughness":0..100}
   straighten   degrees (+ = clockwise)
   crop         [left, top, right, bottom] fractions 0..1
+  sky          {"amount", "recover", "grad", "blue", "sat", "dehaze"}  restore a washed-out sky (masks.sky_enhance)
 """
 from __future__ import annotations
 
 import copy
 import math
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -43,7 +45,104 @@ LUM_W = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 
 # ----------------------------------------------------------------------------- io
+RAW_EXT = {".arw", ".dng", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".orf", ".rw2", ".pef", ".srw", ".3fr", ".iiq"}
+HEIF_EXT = {".heic", ".heif", ".hif"}
+try:  # iPhone HEIC straight into PIL (pip install pillow-heif); otherwise convert with sips first
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+
+def is_raw(path):
+    return str(path).lower().endswith(tuple(RAW_EXT))
+
+
+def raw_base_curve(lin, gain=1.8):
+    """Camera-like baseline for a linear RAW render: lifts the mids with a soft highlight shoulder
+    (f(1) = 1), so the default looks like the camera JPG while the highlights the RAW holds stay
+    recoverable by the highlights / whites sliders."""
+    return lin * gain / (1 + (gain - 1) * lin)
+
+
+def raw_preview(path):
+    """The camera's own JPG embedded in a RAW (bytes) or None. Carries the EXIF (ISO, lens, date)
+    that PIL can't read from most RAW containers, and the camera's brightness judgement."""
+    try:
+        import rawpy
+        with rawpy.imread(str(path)) as raw:
+            th = raw.extract_thumb()
+        return th.data if th.format == rawpy.ThumbFormat.JPEG else None
+    except Exception:
+        return None
+
+
+def _raw_gain(path, lin):
+    """Base-curve gain that puts the RAW render's median where the camera's JPG has it
+    (cameras meter differently; their embedded JPG is the reference for 'normal')."""
+    import io
+    data = raw_preview(path)
+    m = float(np.median(lin @ LUM_W))
+    if not data or m <= 1e-4:
+        return 1.8
+    jp = np.asarray(Image.open(io.BytesIO(data)).convert("RGB").reduce(4), dtype=np.float32) / 255
+    mt = float(np.median(srgb_to_linear(jp) @ LUM_W))
+    g = mt * (1 - m) / max(m * (1 - mt), 1e-6)  # solve raw_base_curve(m, g) = mt
+    return float(np.clip(g, 1.0, 6.0))
+
+
+def _load_raw(path, max_side=None):
+    import rawpy  # pip install rawpy
+    with rawpy.imread(str(path)) as raw:
+        # half_size skips demosaicing (4x faster) and is plenty for analysis / previews
+        half = bool(max_side) and max_side <= min(raw.sizes.width, raw.sizes.height) // 2
+        rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=16, gamma=(1, 1),
+                              half_size=half, highlight_mode=rawpy.HighlightMode.Blend,
+                              output_color=rawpy.ColorSpace.sRGB, user_flip=None)
+    lin = rgb.astype(np.float32) / 65535.0
+    if max_side and max(lin.shape[:2]) > max_side:
+        s = max_side / max(lin.shape[:2])
+        lin = cv2.resize(lin, (int(lin.shape[1] * s), int(lin.shape[0] * s)), interpolation=cv2.INTER_AREA)
+    small = lin if max(lin.shape[:2]) <= 1200 else cv2.resize(lin, None, fx=1200 / max(lin.shape[:2]),
+                                                              fy=1200 / max(lin.shape[:2]), interpolation=cv2.INTER_AREA)
+    out = linear_to_srgb(np.clip(raw_base_curve(lin, _raw_gain(path, small)), 0, 1))
+    return raw_profile(out)
+
+
+# like Lightroom's 'Adobe Color' on top of a flat RAW render: a gentle S-curve and some colour
+RAW_PROFILE_CURVE = [[0, 0], [64, 57], [128, 128], [192, 199], [255, 255]]
+
+
+def raw_profile(rgb, sat=1.15):
+    rgb = tone_curves(rgb.astype(np.float32), {"master": RAW_PROFILE_CURVE})
+    y = (rgb @ LUM_W)[..., None]
+    return np.clip(y + (rgb - y) * sat, 0, 1).astype(np.float32)
+
+
+def exif_image(path):
+    """A PIL image whose getexif() describes `path` (the embedded JPG for RAW files)."""
+    import io
+    if is_raw(path):
+        data = raw_preview(path)
+        return Image.open(io.BytesIO(data)) if data else None
+    return Image.open(path)
+
+
+def _load_heif_sips(path, max_side=None):
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        dst = Path(d) / (Path(path).stem + ".jpg")
+        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "best", str(path), "--out", str(dst)],
+                       check=True, capture_output=True)
+        return load_image(dst, max_side)
+
+
 def load_image(path, max_side=None):
+    if is_raw(path):
+        return _load_raw(path, max_side)
+    if str(path).lower().endswith(tuple(HEIF_EXT)) and "pillow_heif" not in globals():
+        return _load_heif_sips(path, max_side)
     im = Image.open(path)
     if max_side:
         im.draft("RGB", (max_side, max_side))
@@ -58,7 +157,7 @@ def save_image(arr, path, src_path=None, quality=92):
     kw = {"quality": quality, "subsampling": 0 if quality >= 90 else 2}
     if src_path:
         try:
-            src = Image.open(src_path)
+            src = exif_image(src_path)
             exif = src.getexif()
             exif[0x0112] = 1  # pixels are already upright
             exif[0x0131] = "photo-edit-skill"
@@ -234,8 +333,8 @@ def scale_recipe(r, s):
                 else:
                     cg[kk] = vv * s if kk == "balance" else vv
             out[k] = cg
-        elif k in ("vignette", "grain"):
-            out[k] = {**v, "amount": v.get("amount", 0) * s}
+        elif k in ("vignette", "grain", "sky"):
+            out[k] = {**v, "amount": v.get("amount", 1.0 if k == "sky" else 0) * s}
         else:
             out[k] = copy.deepcopy(v)
     return out
@@ -260,7 +359,15 @@ def denoise(rgb, nr, scale):
         s = (1 + col_amt / 100 * 6) * scale
         ycc[..., 1] = gblur(ycc[..., 1], s)
         ycc[..., 2] = gblur(ycc[..., 2], s)
-    if lum_amt:
+    if lum_amt and nr.get("method") == "nlm":
+        # non-local means: averages similar patches across the frame. Much stronger on night / high-ISO
+        # blotches than the bilateral default, keeps edges; slower (~10 s at 24MP), so opt-in
+        y = ycc[..., 0]
+        y8 = (np.clip(y, 0, 1) * 255 + 0.5).astype(np.uint8)
+        den = cv2.fastNlMeansDenoising(y8, None, h=2 + lum_amt / 100 * 10, templateWindowSize=7,
+                                       searchWindowSize=21).astype(np.float32) / 255
+        ycc[..., 0] = y + (den - y) * min(1.0, lum_amt / 60)
+    elif lum_amt:
         y = ycc[..., 0]
         d = max(3, int(round(5 * scale)))
         sc = 0.02 + lum_amt / 100 * 0.10
@@ -306,7 +413,11 @@ def tone_luminance(lin, r, long_side):
     Lg = np.clip(Lg, 0, 1.0)
     Ynew = srgb_to_linear(Lg)
     ratio = (Ynew / Y)[..., None]
-    out = lin * ratio
+    # near-black pixels (phone JPGs crush to ~0) get ratios of 100x+ when shadows/blacks lift them;
+    # scaling RGB by that blows faint channel noise into saturated blue/red blotches. Luminance takes
+    # the full ratio, chroma (deviation from grey) is capped.
+    Y3 = Y[..., None]
+    out = Ynew[..., None] + (lin - Y3) * np.minimum(ratio, 1.5)
     # channels pushed above 1: desaturate toward luminance instead of hue-shifting
     mx = out.max(-1, keepdims=True)
     yy = luminance(out)[..., None]
@@ -540,6 +651,79 @@ def protect_skin(out, ref_hsv, amount):
     return hsv_to_rgb(hsv)
 
 
+def _guided_self(x, r, eps):
+    """Edge-preserving smoothing (guided filter with itself as guide); x float32 2D."""
+    k = (2 * r + 1, 2 * r + 1)
+    mu = cv2.boxFilter(x, -1, k)
+    var = cv2.boxFilter(x * x, -1, k) - mu * mu
+    a = var / (var + eps)
+    b = mu - a * mu
+    return cv2.boxFilter(a, -1, k) * x + cv2.boxFilter(b, -1, k)
+
+
+def beauty(lab, m, bt, long_side):
+    """Portrait retouch inside the skin matte (frequency-separation style), lab = OpenCV float Lab.
+
+    bt: {"smooth": 0..1  remove mid-frequency blemishes/unevenness, keep pore texture,
+         "texture": 0..1 how much fine pore detail survives (0.6 = natural),
+         "even": 0..1    even out blotchy redness / dark patches in colour,
+         "glow": L*      brighten skin, "rosy": a*  add a little healthy pink}
+    Radii scale with the skin area so a close selfie and a small face in a group shot get the same look.
+    """
+    area = float((m > 0.5).sum())
+    if area < 400:
+        return lab
+    s = float(np.clip(np.sqrt(area), long_side * 0.03, long_side * 0.6))  # ~ face width in px
+    L = lab[..., 0] / 100.0
+    sm = bt.get("smooth", 0.5)
+    if sm:
+        fine = L - gblur(L, max(0.6, s * 0.004))                     # pores / fine texture
+        r = max(2, int(s * 0.018))
+        base = _guided_self(L, r, 0.0012)                            # blemishes & bumps flattened, edges kept
+        Ln = base + fine * bt.get("texture", 0.6)
+        L = L + (Ln - L) * (m * sm)
+    ev = bt.get("even", 0.4)
+    if ev:
+        sig = s * 0.035
+        wsum = gblur(m, sig) + 1e-4
+        for c in (1, 2):                                             # skin-only blur of colour (no bleed from hair)
+            avg = gblur(lab[..., c] * m, sig) / wsum
+            lab[..., c] += (avg - lab[..., c]) * (m * ev)
+    lab[..., 0] = np.clip(L * 100 + bt.get("glow", 0) * m, 0, 100)
+    if bt.get("rosy"):
+        lab[..., 1] += bt["rosy"] * m
+    return lab
+
+
+def skin_anchor(out, ref_lab, sa, h, w, long_side):
+    """Pull skin (iPhone semantic skin matte) back to the camera's own skin rendering, in Lab.
+
+    Phones already tone-map faces locally with these same mattes; global highlight/shadow/contrast/HSL moves then
+    push faces darker/brighter/yellower than the scene around them, which reads as 'something is off'. Pros fix
+    skin on a face-skin mask; this does that: L -> ref L + lum, chroma -> ref * sat, hue -> ref hue.
+    sa: {"amount": 0..1, "lum": L* offset, "sat": chroma factor, "teeth": whiten 0..1}
+    """
+    import masks as M
+    skin = M._matte("skin", h, w)
+    teeth = M._matte("teeth", h, w) if sa.get("teeth", 0.5) else None
+    if skin.max() < 0.05 and (teeth is None or teeth.max() < 0.05):
+        return out
+    lab = cv2.cvtColor(np.clip(out, 0, 1).astype(np.float32), cv2.COLOR_RGB2LAB)
+    m = gblur(skin, long_side * 0.002) * sa.get("amount", 0.75)
+    tgt_L = ref_lab[..., 0] + sa.get("lum", 0)
+    lab[..., 0] += (tgt_L - lab[..., 0]) * m
+    tgt_ab = ref_lab[..., 1:] * sa.get("sat", 1.0)
+    lab[..., 1:] += (tgt_ab - lab[..., 1:]) * m[..., None]
+    bt = sa.get("beauty")
+    if bt and skin.max() >= 0.05:
+        lab = beauty(lab, gblur(skin, long_side * 0.002), bt, long_side)
+    if teeth is not None and teeth.max() >= 0.05:
+        t = gblur(teeth, long_side * 0.001) * sa.get("teeth", 0.5)
+        lab[..., 1:] *= (1 - 0.6 * t)[..., None]          # de-yellow
+        lab[..., 0] += 4 * t * (lab[..., 0] < 90)          # a touch brighter
+    return np.clip(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), 0, 1)
+
+
 # ----------------------------------------------------------------------------- main entry
 def develop(img, recipe):
     """img: float32 sRGB HxWx3 in 0..1. Returns developed float32 sRGB."""
@@ -550,6 +734,7 @@ def develop(img, recipe):
         spec = spec if isinstance(spec, dict) else {"remove": spec}
         img, _, _ = R.erase(img, spec.get("remove", "bystanders") if "keep" not in spec else {"keep": spec["keep"]},
                             spec.get("grow", 0.10), extra=spec.get("extra"))
+    pre_geom = img.shape[:2]
     img = geometry(img, r)
     h, w = img.shape[:2]
     long_side = max(h, w)
@@ -558,6 +743,16 @@ def develop(img, recipe):
     img = denoise(img, r.get("noise") or {}, max(scale, 0.25))
     skin = r.get("skin_protect", 0)
     ref_hsv = rgb_to_hsv(img) if skin and not (r.get("bw") or {}).get("enabled") else None
+    sa = r.get("skin_anchor") if r.get("_mattes") and not (r.get("bw") or {}).get("enabled") else None
+    if r.get("_mattes"):
+        import masks as M
+        M.set_mattes(r.get("_mattes"), pre_geom, r)
+    ref_lab = cv2.cvtColor(img.astype(np.float32), cv2.COLOR_RGB2LAB) if sa else None
+    pt = r.get("portrait") if not (r.get("bw") or {}).get("enabled") else None
+    pfaces = None
+    if pt and any(pt.values()):
+        import portrait as P  # face-mesh retouch (MediaPipe); landmarks from the untouched pixels
+        pfaces = P.detect(img)
     lin = srgb_to_linear(img)
     del img
     lin = white_balance(lin, r.get("temp", 0), r.get("tint", 0))
@@ -573,12 +768,25 @@ def develop(img, recipe):
     else:
         out = hsl_and_saturation(out, r)
     out = color_grade(out, r.get("color_grade"))
+    if sa:
+        out = skin_anchor(out, ref_lab, sa, h, w, long_side)
+        del ref_lab
+    if r.get("sky") and not (r.get("bw") or {}).get("enabled"):
+        import masks as M  # restore a washed-out sky (sky matte / heuristic mask)
+        M.set_mattes(r.get("_mattes"), pre_geom, r)
+        out = M.sky_enhance(out, r["sky"], long_side)
     if r.get("masks"):
         import masks as M  # local adjustments (lazy: masks imports engine)
+        M.set_mattes(r.get("_mattes"), pre_geom, r)
         out = M.apply_masks(out, r["masks"])
     if ref_hsv is not None:
         out = protect_skin(out, ref_hsv, skin)
         del ref_hsv
+    if pfaces:
+        import masks as M
+        sk = M._matte("skin", h, w) if r.get("_mattes") else None
+        out = P.retouch_tone(out, pfaces, pt, sk)
+        out = P.retouch_warp(out, pfaces, pt)
     out = sharpen(out, r.get("sharpen") or {}, max(scale, 0.25))
     out = vignette(out, r.get("vignette") or {})
     out = grain(out, r.get("grain") or {}, max(scale, 0.25))

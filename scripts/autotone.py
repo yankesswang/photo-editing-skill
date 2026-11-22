@@ -18,7 +18,7 @@ import engine as E
 def read_exif(path):
     out = {}
     try:
-        im = Image.open(path)
+        im = E.exif_image(path)
         ex = im.getexif()
         sub = ex.get_ifd(0x8769)
         tags = {**{ExifTags.TAGS.get(k, k): v for k, v in ex.items()},

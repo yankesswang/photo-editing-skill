@@ -1,0 +1,60 @@
+{
+ "name": "vivid-iphone",
+ "description": "Punchy 'better phone photo' with a light portrait touch. Keeps the iPhone's own rendering (use with --no-auto): more colour, deeper blacks, bluer skies; faces held at the camera's rendering via the iPhone skin matte, with very light smoothing, softer dark circles, whiter teeth and a slight face slim. Features otherwise untouched.",
+ "use_for": [
+  "people",
+  "travel",
+  "daylight",
+  "city",
+  "landscape",
+  "iphone"
+ ],
+ "avoid_for": [
+  "night/low-light"
+ ],
+ "contrast": 8,
+ "highlights": -8,
+ "blacks": -6,
+ "clarity": 6,
+ "dehaze": 4,
+ "vibrance": 22,
+ "saturation": 4,
+ "hsl": {
+  "blue": {
+   "sat": 12,
+   "lum": -10
+  },
+  "aqua": {
+   "sat": 8,
+   "lum": -5
+  },
+  "green": {
+   "sat": 8
+  },
+  "yellow": {
+   "sat": 6
+  },
+  "orange": {
+   "sat": -4
+  }
+ },
+ "skin_anchor": {
+  "amount": 0.9,
+  "lum": 0,
+  "sat": 1.0,
+  "teeth": 0.5,
+  "beauty": {
+   "smooth": 0.35,
+   "texture": 0.8,
+   "even": 0.25,
+   "glow": 1,
+   "rosy": 0
+  }
+ },
+ "portrait": {
+  "undereye": 0.4,
+  "slim": 0.2,
+  "contour": 0,
+  "eyes": 0
+ }
+}

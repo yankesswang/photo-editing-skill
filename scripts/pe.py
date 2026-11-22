@@ -8,17 +8,21 @@
   pe.py styles                                  list looks
   pe.py analyze IMG...                          stats + scene tags + auto correction (JSON)
   pe.py board IMG [--styles a,b] -o board.jpg   one photo rendered in many looks (to choose)
-  pe.py develop IMG... --style NAME [...]       render full-res edits (+ recipe sidecar)
+  pe.py develop IMG... --style NAME [...]       render full-res edits (+ recipe sidecar); --consistent syncs a set
   pe.py compare BEFORE AFTER -o cmp.jpg         labelled side-by-side
   pe.py review ORIG_DIR EDIT_DIR                before|after pair sheets for a whole output folder
   pe.py contact IMG... -o sheet.jpg             contact sheet
   pe.py cull DIR                                bursts -> groups, veto blur/exposure, picks.txt + sheets
   pe.py organize DIR [--apply link]             album: events x categories, delete suggestions + HTML report
   pe.py masks IMG --mask face --mask sky        red overlay of local-adjustment masks
+  pe.py mattes IPHONE.HEIC... [-o DIR]          extract iPhone skin/hair/teeth/person/sky mattes -> <stem>.mattes/
   pe.py people IMG -o people.jpg                 numbered people, subject vs bystander guess
   pe.py erase IMG --remove bystanders|2,5        remove people (inpainting) into new files
+  pe.py fill IMG --source OTHER.JPG [--keep 0]   remove people with REAL pixels from another frame of the scene
+  pe.py stack F1 F2 F3... -o merged.jpg          align + merge a handheld burst: multi-frame noise reduction
   pe.py match IMG --ref REF.jpg [-o recipe.json] derive a recipe that moves IMG toward REF's look
   pe.py xmp STYLE|RECIPE.json [-o out.xmp]      export as Lightroom preset
+  pe.py photos DIR... [--album NAME]            import finished JPGs into Apple Photos (-> iCloud)
 """
 from __future__ import annotations
 
@@ -35,7 +39,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 STYLES_DIR = HERE.parent / "styles"
 DEFAULT_OUT = Path.home() / "Pictures" / "PhotoEdit"
-IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".heic"}
+IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".heic", ".heif"} | {
+    ".arw", ".dng", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".orf", ".rw2", ".pef", ".srw"}
 
 import numpy as np  # noqa: E402
 
@@ -89,7 +94,8 @@ def label(img, text, size=None):
     d = ImageDraw.Draw(im)
     fs = size or max(14, im.width // 28)
     font = None
-    for f in ("/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Helvetica.ttc",
+    for f in ("/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Medium.ttc",
+              "/System/Library/Fonts/Helvetica.ttc",
               "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         try:
             font = ImageFont.truetype(f, fs)
@@ -114,9 +120,11 @@ def grid(tiles, cols, gap=6):
     return out
 
 
-def build_recipe(path, style, strength=1.0, auto=True, adjust=None, img_small=None):
+def build_recipe(path, style, strength=1.0, auto=True, adjust=None, img_small=None, corr_override=None):
     info = autotone.analyze(path, img_small)
     corr = info["auto_correction"] if auto else {}
+    if auto and corr_override:  # batch consistency: the scene group's shared WB / tone
+        corr = {**corr, **{k: v for k, v in corr_override.items() if not k.startswith("_")}}
     if any(t.startswith("people") for t in info["tags"]):
         corr = {**corr, "skin_protect": 0.8}
     look = E.scale_recipe({k: v for k, v in style.items() if k not in E.META_KEYS}, strength)
@@ -167,17 +175,20 @@ def _worker_init(parent_pid):
 
 
 def _develop_one(job):
-    path, style, strength, auto, adjust, outdir, preview, suffix, quality = job
+    path, style, strength, auto, adjust, outdir, preview, suffix, quality, sync = job
     t = time.time()
     small = E.load_image(path, 900)
-    recipe = build_recipe(path, style, strength, auto, adjust, small)
+    recipe = build_recipe(path, style, strength, auto, adjust, small, sync)
+    side_mattes = Path(path).with_suffix(".mattes")  # iPhone semantic mattes (pe.py mattes) for 'matte' masks
+    if side_mattes.is_dir():
+        recipe["_mattes"] = str(side_mattes)
     img = E.load_image(path, preview) if preview else E.load_image(path)
     out = E.develop(img, recipe)
     name = Path(path).stem + (f"_{suffix}" if suffix else "") + ".jpg"
     dst = Path(outdir) / name
     E.save_image(out, dst, path, quality)
     side = {"source": str(path), "style": style.get("name"), "strength": strength, "auto": auto,
-            "adjust": adjust, "recipe": recipe}
+            "adjust": adjust, "recipe": recipe, **({"group": sync["_group"]} if sync else {})}
     dst.with_suffix(".recipe.json").write_text(json.dumps(side, ensure_ascii=False, indent=1))
     return f"{dst}  ({time.time() - t:.1f}s)"
 
@@ -192,10 +203,17 @@ def cmd_develop(a):
     outdir.mkdir(parents=True, exist_ok=True)
     per_file = load_json_arg(a.per_file) if a.per_file else {}
     suffix = a.suffix if a.suffix is not None else style.get("name", "edit")
+    sync = {}
+    if a.consistent and not a.no_auto and len(files) > 1:
+        import consistency as C
+        grps = C.groups(files, gap=a.group_gap)
+        print(C.report(grps), flush=True)
+        sync = C.overrides(grps)
     jobs = []
     for f in files:
         adj = E.merge_recipes(adjust, per_file.get(f.name) or per_file.get(f.stem) or {})
-        jobs.append((str(f), style, a.strength, not a.no_auto, adj, str(outdir), a.preview, suffix, a.quality))
+        jobs.append((str(f), style, a.strength, not a.no_auto, adj, str(outdir), a.preview, suffix, a.quality,
+                     sync.get(str(f))))
     workers = max(1, min(a.jobs, len(jobs)))
     if workers == 1:
         for j in jobs:
@@ -267,9 +285,11 @@ def cmd_review(a):
     edits = sorted(Path(a.edited).glob("*.jpg"))
     tiles = []
     for e in edits:
-        stem = e.stem.split("_")[0]
-        if stem not in src:
+        # edited files are "<orig stem>_<style>"; orig stems may contain "_" too → longest prefix match
+        cands = [s for s in src if e.stem == s or e.stem.startswith(s + "_")]
+        if not cands:
             continue
+        stem = max(cands, key=len)
         b = E.load_image(str(src[stem]), a.size)
         af = E.load_image(str(e), a.size)
         if b.shape != af.shape:  # rotated/cropped edit: match height, keep its own aspect
@@ -293,6 +313,27 @@ def cmd_review(a):
     print("\n".join(outs))
 
 
+def apple_mattes_bin():
+    """Compile (once) the ImageIO matte extractor; needs macOS + swiftc (Xcode command line tools)."""
+    import subprocess
+    src = HERE / "apple_mattes.swift"
+    out = Path.home() / ".cache/photo-edit/apple_mattes"
+    if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["swiftc", "-O", str(src), "-o", str(out)], check=True, capture_output=True)
+    return out
+
+
+def cmd_mattes(a):
+    """iPhone HEIC/JPG -> <stem>.mattes/{portrait,skin,hair,teeth,glasses,sky}.png + meta.json (orientation)."""
+    import subprocess
+    exe = apple_mattes_bin()
+    for f in expand(a.images):
+        dst = (Path(a.out) if a.out else f.parent) / (f.stem + ".mattes")
+        r = subprocess.run([str(exe), str(f), str(dst)], capture_output=True, text=True)
+        print(f"{f.name}: {r.stdout.strip() or 'no mattes'}")
+
+
 def cmd_masks(a):
     """Show every mask of a recipe as a red overlay (verify coverage before trusting a local edit)."""
     import masks as M
@@ -311,6 +352,8 @@ def cmd_masks(a):
         entries.append({"name": spec, "mask": load_json_arg(spec) if spec.startswith("{") else {"type": spec}})
     if not entries:
         sys.exit("no masks: pass --auto, --recipe, --adjust or --mask face|subject|sky|'{json}'")
+    side_mattes = path.with_suffix(".mattes")
+    M.set_mattes(str(side_mattes) if side_mattes.is_dir() else None, img.shape[:2], {})
     faces = M.detect_faces(img)
     tiles = [label(img, f"{path.stem}  faces={len(faces)}")]
     for ov, name in M.overlay(img, entries, faces):
@@ -470,7 +513,7 @@ def cmd_organize(a):
 
     def face_for(it, reason):
         ppl = it.get("people") or []
-        if reason in ("eyes closed", "someone's eyes closed", "looking down") and ppl:
+        if reason in ("eyes closed", "someone's eyes closed", "eyes half closed") and ppl:
             ppl = sorted(ppl, key=lambda f: -min(f["blink_l"], f["blink_r"]))
         return ppl[0]["thumb"] if ppl else None
 
@@ -480,13 +523,13 @@ def cmd_organize(a):
             hard = reason in it["reasons"]
             info = ""
             ppl = it.get("people") or []
-            if ppl and reason in ("eyes closed", "someone's eyes closed", "looking down"):
+            if ppl and reason in ("eyes closed", "someone's eyes closed", "eyes half closed"):
                 f = max(ppl, key=lambda f: min(f["blink_l"], f["blink_r"]))
-                info = f" 閉眼{min(f['blink_l'], f['blink_r']):.2f}"
+                info = f" eyes{min(f['blink_l'], f['blink_r']):.2f}"
             elif ppl and reason in ("missed focus", "blurry face"):
-                info = f" 臉{ppl[0]['sharp']:.2f}/景{it['frame_sharp']:.2f}"
+                info = f" face{ppl[0]['sharp']:.2f}/bg{it['frame_sharp']:.2f}"
             elif reason == "duplicate":
-                info = f" 保留{Path(it.get('burst_keeper', '')).stem[-4:]}"
+                info = f" keep{Path(it.get('burst_keeper', '')).stem[-4:]}"
             tiles.append(_org_tile(it, sz, (0.9, 0.15, 0.15) if hard else (0.95, 0.65, 0.1),
                                    f"{Path(it['file']).stem[-5:]}{info}", face_for(it, reason)))
         slug = reason.replace("'", "").replace(" ", "-")
@@ -574,6 +617,61 @@ def cmd_erase(a):
         print(f"{dst}  removed {removed} of {len(ps)} people  ({time.time() - t:.1f}s)")
 
 
+def cmd_fill(a):
+    """Remove people using real background from other frames of the same scene; LaMa only for leftovers."""
+    import fill as F
+    if a.keep:
+        spec = {"keep": [int(x) for x in a.keep.split(",")]}
+    elif a.remove in ("bystanders", "all"):
+        spec = a.remove
+    else:
+        spec = [int(x) for x in a.remove.split(",")]
+    t = time.time()
+    tgt = E.load_image(str(a.image))
+    srcs = [E.load_image(str(s)) for s in expand(a.source)]
+    out, rep = F.fill(tgt, srcs, spec, a.grow)
+    dst = Path(a.out) if a.out else DEFAULT_OUT / (Path(a.image).parent.name + "_erased") / Path(a.image).name
+    if dst.suffix == "" or dst.is_dir():
+        dst = dst / Path(a.image).name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    E.save_image(out, dst, str(a.image), 95)
+    for st in rep["sources"]:
+        print(f"  source {st['source']}: fit {st.get('fit')}  inliers {st.get('inliers', 0)}  "
+              f"filled {st.get('filled_px', 0)} px  ring_diff {st.get('ring_diff', '-')}")
+    print(f"{dst}  removed {rep['removed']} of {rep['people']} people, "
+          f"{rep.get('real_pct', 100)}% real pixels  ({time.time() - t:.1f}s)")
+    for w in rep.get("warnings", []):
+        print(f"  WARNING: {w}  -> check 100% crop; prefer erase or keep the person")
+
+
+def cmd_stack(a):
+    """Merge a burst into one low-noise frame (then develop it like any photo)."""
+    import stack as K
+    files = expand(a.images)
+    if len(files) < 2:
+        sys.exit("stack needs at least 2 frames")
+    t = time.time()
+    frames = [E.load_image(str(f), a.preview) if a.preview else E.load_image(str(f)) for f in files]
+    ref = None
+    if a.ref:
+        names = [f.name for f in files]
+        ref = names.index(Path(a.ref).name) if Path(a.ref).name in names else None
+    out, rep = K.merge(frames, ref, a.ghost)
+    dst = Path(a.out) if a.out else DEFAULT_OUT / (files[0].parent.name + "_stacked") / (files[rep["ref"]].stem + "_stack.jpg")
+    if dst.suffix == "" or dst.is_dir():
+        dst = dst / (files[rep["ref"]].stem + "_stack.jpg")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    E.save_image(out, dst, str(files[rep["ref"]]), 95)
+    print(f"reference {files[rep['ref']].name}  noise sigma {rep['noise_sigma']} -> {rep['noise_after']}")
+    for st in rep["frames"]:
+        name = files[st["frame"]].name
+        if st.get("used"):
+            print(f"  {name}: aligned ({st['inliers']} inliers, ECC {st.get('ecc')}), static {st['static_pct']}%")
+        else:
+            print(f"  {name}: SKIPPED ({st.get('reason')})")
+    print(f"{dst}  merged {rep['used']} of {len(files)} frames  ({time.time() - t:.1f}s)")
+
+
 def cmd_match(a):
     import match
     rec = match.match_recipe(str(a.image), [str(p) for p in expand(a.ref)], a.strength)
@@ -595,6 +693,23 @@ def cmd_xmp(a):
     print(dst)
 
 
+def cmd_photos(a):
+    import photos as P
+    res = P.run(a.paths, album=a.album, batch=a.batch, recursive=not a.no_recursive, dry_run=a.dry_run)
+    if a.dry_run:
+        return
+    bad = False
+    for r in res:
+        line = (f"{r['album']}: {r['album_count']} in album "
+                f"(+{r['imported']} new, {r['skipped_existing']} already there)")
+        if not r["ok"]:
+            bad = True
+            line += f"  MISSING {len(r['missing_after'])}: " + ", ".join(r["missing_after"][:10])
+        print(line)
+    if bad:
+        sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -612,6 +727,9 @@ def main():
     p.add_argument("--per-file", help="JSON {filename: {tweaks}} for per-photo fixes")
     p.add_argument("--no-auto", action="store_true", help="skip per-photo auto correction")
     p.add_argument("--preview", type=int, help="render at this long side instead of full res")
+    p.add_argument("--consistent", action="store_true",
+                   help="sync WB / tone corrections within scene groups (time gap + scene change); exposure stays per photo")
+    p.add_argument("--group-gap", type=int, default=600, help="seconds between frames that start a new scene group")
     p.add_argument("-o", "--out", help=f"output dir (default {DEFAULT_OUT}/<folder>_<style>)")
     p.add_argument("--suffix", help="filename suffix (default style name; '' for none)")
     p.add_argument("--quality", type=int, default=92)
@@ -688,6 +806,23 @@ def main():
     p.add_argument("--preview", type=int, help="work at this long side (fast check)")
     p.add_argument("-o", "--out"); p.set_defaults(fn=cmd_erase)
 
+    p = sp.add_parser("fill", help="remove people with real pixels borrowed from another frame (burst / re-shot)")
+    p.add_argument("image"); p.add_argument("--source", nargs="+", required=True, help="other frame(s) of the same scene")
+    p.add_argument("--remove", default="bystanders", help="'bystanders' (default), 'all', or ids '2,3,5'")
+    p.add_argument("--keep", help="ids to keep; everyone else is removed")
+    p.add_argument("--grow", type=float, default=0.08, help="mask dilation as fraction of person height")
+    p.add_argument("-o", "--out", help="output file or folder"); p.set_defaults(fn=cmd_fill)
+
+    p = sp.add_parser("stack", help="align + merge a handheld burst into one low-noise frame (night / high ISO)")
+    p.add_argument("images", nargs="+"); p.add_argument("--ref", help="reference frame (default: the sharpest)")
+    p.add_argument("--ghost", type=float, default=2.5, help="motion tolerance, x the pair's median difference (lower = stricter)")
+    p.add_argument("--preview", type=int, help="work at this long side (fast check)")
+    p.add_argument("-o", "--out", help="output file or folder"); p.set_defaults(fn=cmd_stack)
+
+    p = sp.add_parser("mattes", help="extract the iPhone's own segmentation mattes (skin/hair/teeth/person/sky)")
+    p.add_argument("images", nargs="+"); p.add_argument("-o", "--out", help="dir for <stem>.mattes/ (default: next to image)")
+    p.set_defaults(fn=cmd_mattes)
+
     p = sp.add_parser("match"); p.add_argument("image"); p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--strength", type=float, default=0.8); p.add_argument("-o", "--out")
     p.set_defaults(fn=cmd_match)
@@ -695,6 +830,14 @@ def main():
     p = sp.add_parser("xmp"); p.add_argument("recipe", help="style name, style .json or .recipe.json")
     p.add_argument("--name"); p.add_argument("--group", default="Photo Edit Skill"); p.add_argument("-o", "--out")
     p.set_defaults(fn=cmd_xmp)
+
+    p = sp.add_parser("photos", help="import finished photos into Apple Photos albums (syncs to iCloud if enabled)")
+    p.add_argument("paths", nargs="+", help="output folder(s) or image files; each folder with images = one album")
+    p.add_argument("--album", help="album name (default: the folder name)")
+    p.add_argument("--batch", type=int, default=25, help="images per import call (big calls hit Photos error -609)")
+    p.add_argument("--no-recursive", action="store_true", help="only the given folder, not its subfolders")
+    p.add_argument("--dry-run", action="store_true", help="show which albums / how many photos, import nothing")
+    p.set_defaults(fn=cmd_photos)
 
     a = ap.parse_args()
     a.fn(a)
