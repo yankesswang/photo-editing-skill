@@ -137,7 +137,9 @@ def person_mask(shape, chosen, grow=0.10):
         one = np.zeros((h, w), np.uint8)
         cv2.fillPoly(one, [p["poly"].astype(np.int32)], 255)
         ph = p["box"][3] * h
-        r = int(max(3, grow * ph))
+        # proportional to the person, but capped in absolute terms: a person filling half the frame
+        # must not swallow the umbrellas and walls around them
+        r = int(min(max(3, grow * ph), max(6, 0.012 * max(h, w))))
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
         one = cv2.dilate(one, k)
         # extend a little below the feet (contact shadow)
@@ -183,7 +185,7 @@ def _lama_run(rgb_u8, mask_u8):
     return out
 
 
-def inpaint(img, mask, work=1024):
+def inpaint(img, mask, work=2400):
     """Fill mask (uint8 HxW, 255 = remove) region by region. Each region is cropped with
     generous context, run through LaMa at <= `work` px, and pasted back with a feathered edge."""
     h, w = mask.shape
@@ -195,7 +197,8 @@ def inpaint(img, mask, work=1024):
         x, y, bw, bh, area = stats[i]
         if area < 16:
             continue
-        pad = int(max(bw, bh) * 1.2 + 48)
+        # context: enough for LaMa to read the surroundings, small enough to keep resolution
+        pad = int(min(max(bw, bh) * 1.2, max(bw, bh) * 0.35 + 160) + 48)
         boxes.append([max(0, x - pad), max(0, y - pad), min(w, x + bw + pad), min(h, y + bh + pad)])
     merged = []
     for b in sorted(boxes):
@@ -218,10 +221,10 @@ def inpaint(img, mask, work=1024):
         # restore some fine texture lost by the downscale: add grain-matched noise from the crop
         if s < 1:
             hf = crop - cv2.GaussianBlur(crop, (0, 0), 1.0 / s)
-            sd = float(hf[cm < 128].std()) if (cm < 128).any() else 0.0
+            sd = float(np.median(np.abs(hf[cm < 128]))) * 1.4 if (cm < 128).any() else 0.0
             rng = np.random.default_rng(0)
             noise = cv2.GaussianBlur(rng.standard_normal((ch, cw)).astype(np.float32), (0, 0), 0.6)
-            filled = filled + (noise / max(noise.std(), 1e-6) * sd * 0.8)[..., None]
+            filled = filled + (noise / max(noise.std(), 1e-6) * min(sd, 0.02) * 0.5)[..., None]
         soft = cv2.GaussianBlur((cm > 127).astype(np.float32), (0, 0), 2.5)[..., None]
         out[y0:y1, x0:x1] = crop * (1 - soft) + np.clip(filled, 0, 1) * soft
     return np.clip(out, 0, 1)

@@ -31,10 +31,14 @@ import numpy as np
 from PIL import Image, ImageOps
 
 MODEL_DIR = Path(os.environ.get("PHOTO_EDIT_MODELS", Path.home() / ".cache" / "photo-edit" / "models"))
-FACE_TASK_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
-                 "face_landmarker/float16/1/face_landmarker.task")
+MODEL_URLS = {
+    "face_landmarker.task": "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+                            "face_landmarker/float16/1/face_landmarker.task",
+    "blaze_face_short_range.tflite": "https://storage.googleapis.com/mediapipe-models/face_detector/"
+                                     "blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+}
 CLIP_ID = "openai/clip-vit-base-patch32"
-FACE_V = 1  # bump to invalidate cached face scans
+FACE_V = 2  # bump to invalidate cached face scans
 
 # key, 中文名稱, CLIP prompts (averaged). Order = tie priority. Edit freely or pass --categories file.json
 CATEGORIES = [
@@ -66,17 +70,17 @@ REASON_ZH = {
     "eyes closed": "閉眼", "someone's eyes closed": "有人閉眼", "missed focus": "失焦（焦點在背景）",
     "blurry face": "臉糊", "blurry": "整張模糊／手震", "too dark": "太暗救不回", "blown out": "大面積過曝",
     "duplicate": "連拍重複（組內有更好的）", "accidental": "誤拍", "face cut off": "臉被裁切",
-    "looking down": "低頭（閉眼判斷不確定）",
+    "eyes half closed": "眼睛半閉／往下看", "similar": "相似照（同場景另一個角度）",
 }
 
 
 def model_path(name="face_landmarker.task"):
     p = MODEL_DIR / name
-    if not p.exists() or p.stat().st_size < 1_000_000:
+    if not p.exists() or p.stat().st_size < 100_000:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         print(f"downloading {name} -> {p} (one-time)", flush=True)
         tmp = p.with_suffix(".part")
-        urllib.request.urlretrieve(FACE_TASK_URL, tmp)
+        urllib.request.urlretrieve(MODEL_URLS[name], tmp)
         tmp.rename(p)
     return p
 
@@ -102,7 +106,10 @@ def _landmarker():
             running_mode=vision.RunningMode.IMAGE, num_faces=1, output_face_blendshapes=True,
             output_facial_transformation_matrixes=True, min_face_detection_confidence=0.4,
             min_face_presence_confidence=0.4)
-        _LM = (mp, vision.FaceLandmarker.create_from_options(opts))
+        det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
+            base_options=BaseOptions(model_asset_path=str(model_path("blaze_face_short_range.tflite"))),
+            running_mode=vision.RunningMode.IMAGE, min_detection_confidence=0.5))
+        _LM = (mp, vision.FaceLandmarker.create_from_options(opts), det)
     return _LM
 
 
@@ -163,7 +170,7 @@ def faces_and_eyes(arr):
     """arr uint8 RGB (≈2000px long side). Returns faces sorted by size (desc), each:
     box (normalised x,y,w,h), px (face width in pixels at this scale), blink_l/blink_r (0..1, 1 = closed),
     pitch/yaw (deg), sharp (sharpness() on the face), crop (uint8 220px, for sheets)."""
-    mp, lm = _landmarker()
+    mp, lm, det = _landmarker()
     H, W = arr.shape[:2]
     gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
     out = []
@@ -175,9 +182,16 @@ def faces_and_eyes(arr):
         if crop.shape[0] < 20 or crop.shape[1] < 20:
             continue
         big = cv2.resize(crop, (384, 384), interpolation=cv2.INTER_CUBIC if crop.shape[0] < 384 else cv2.INTER_AREA)
-        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(big)))
+        mimg = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(big))
+        # BlazeFace must agree there is a face in the crop: the landmarker alone happily fits a face
+        # mesh onto lamp posts, screens and lions (Haar false positives)
+        dets = det.detect(mimg).detections
+        conf = max((d.categories[0].score for d in dets), default=0.0)
+        if conf < 0.6:
+            continue
+        res = lm.detect(mimg)
         if not res.face_landmarks:
-            continue  # Haar false positive (or a face too odd to judge)
+            continue
         bs = {c.category_name: c.score for c in res.face_blendshapes[0]}
         pitch, yaw = _pitch_yaw(res.facial_transformation_matrixes[0]) if res.facial_transformation_matrixes else (0, 0)
         # sharpness on the inner face (Haar box, no hair/background), native pixels, ≤160px
@@ -189,7 +203,7 @@ def faces_and_eyes(arr):
         xs = [p.x for p in lms]; ys = [p.y for p in lms]
         cut = (x0 == 0 and min(xs) < 0.02) or (y0 == 0 and min(ys) < 0.02) or \
               (x1 == W and max(xs) > 0.98) or (y1 == H and max(ys) > 0.98)
-        out.append({"box": [x / W, y / H, bw / W, bh / H], "px": int(bw),
+        out.append({"box": [x / W, y / H, bw / W, bh / H], "px": int(bw), "conf": round(conf, 3),
                     "blink_l": round(bs.get("eyeBlinkLeft", 0), 3), "blink_r": round(bs.get("eyeBlinkRight", 0), 3),
                     "squint": round((bs.get("eyeSquintLeft", 0) + bs.get("eyeSquintRight", 0)) / 2, 3),
                     "look_down": round((bs.get("eyeLookDownLeft", 0) + bs.get("eyeLookDownRight", 0)) / 2, 3),
@@ -268,6 +282,10 @@ def classify(rows, out_dir, categories=CATEGORIES, batch=32):
             cache = c["probs"]
     todo = [r for r in rows if r["file"] not in cache and r.get("thumb")]
     if todo:
+        import sys
+        os.environ.setdefault("USE_TF", "0")  # a numpy-1 TensorFlow install would crash the import
+        os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+        sys.modules.setdefault("tensorflow", None)  # type: ignore[arg-type]
         import torch
         from transformers import CLIPModel, CLIPProcessor
         print(f"  CLIP: {len(todo)} frames ({CLIP_ID}; first run downloads ~600MB)", flush=True)
@@ -321,7 +339,8 @@ def events(rows, gap_h=3.0):
 # ----------------------------------------------------------------------------- verdict
 def judge(rows, faces, probs, groups, th=None):
     """Attach category / people / reasons / verdict ('delete' | 'review' | 'keep') to every row."""
-    th = {"blink": 0.55, "face_px": 60, "face_soft": 1.0, "focus_gap": 0.9, "frame_soft": 1.0, **(th or {})}
+    th = {"blink": 0.5, "blink_soft": 0.38, "dup_sim": 0.85, "dup_dt": 20, "face_px": 60, "face_soft": 1.0, "focus_gap": 0.9,
+          "face_conf": 0.75, "cat_min": 0.3, "frame_blur": 2.2, "frame_soft": 3.0, **(th or {})}
     by_file = {}
     for g in groups:
         for r in g:
@@ -331,28 +350,31 @@ def judge(rows, faces, probs, groups, th=None):
         if "error" in r:
             continue
         fz = faces.get(r["file"], {}) or {}
-        ppl = fz.get("people", [])
+        # BlazeFace < 0.75 on a 1.6k-frame card was almost always a statue, ornament or crystal
+        ppl = [f for f in fz.get("people", []) if f.get("conf", 1) >= th["face_conf"]]
         g, rr = by_file.get(r["file"], ([r], r))
         r = {**r, **rr}
         pr = probs.get(r["file"], {})
         cat = max(pr, key=pr.get) if pr else "other"
+        if pr and pr[cat] < th["cat_min"]:
+            cat = "other"  # CLIP unsure (softmax over ~14 classes): better 其他 than a wrong album
         # a real (landmark-confirmed) face that fills a decent part of the frame wins over CLIP's scene guess
         main = [f for f in ppl if f["px"] >= max(th["face_px"], 0.5 * ppl[0]["px"])] if ppl else []
         if main and cat not in PEOPLE_CATS and main[0]["box"][2] > 0.07:
             cat = "group" if len(main) >= 3 else "portrait"
         reasons, soft = [], []
-        # --- people checks (only faces big enough to judge)
+        # --- people checks (only landmark-confirmed faces big enough to judge)
         judged = [f for f in main if f["px"] >= th["face_px"]]
-        closed = [f for f in judged if min(f["blink_l"], f["blink_r"]) >= th["blink"]]
-        down = [f for f in closed if f["pitch"] < -18 or f["look_down"] > 0.45]
-        if closed:
-            real = [f for f in closed if f not in down]
-            if real and (real[0] is judged[0] or len(judged) <= 2):
-                reasons.append("eyes closed")
-            elif real:
-                soft.append("someone's eyes closed")
-            if down:
-                soft.append("looking down")
+        def blink(f):
+            return min(f["blink_l"], f["blink_r"])
+        closed = [f for f in judged if blink(f) >= th["blink"]]
+        half = [f for f in judged if th["blink_soft"] <= blink(f) < th["blink"]]
+        if closed and (closed[0] is judged[0] or len(judged) <= 2):
+            reasons.append("eyes closed")
+        elif closed:
+            soft.append("someone's eyes closed")
+        elif half:
+            soft.append("eyes half closed")
         if judged:
             f0 = judged[0]
             fs, frm = f0["sharp"] or 0, fz.get("frame_sharp", 0)
@@ -363,12 +385,18 @@ def judge(rows, faces, probs, groups, th=None):
             if f0["cut"] and f0["box"][2] > 0.12:
                 soft.append("face cut off")
         # --- frame checks
-        if not judged and fz.get("frame_sharp", 9) < th["frame_soft"]:
-            reasons.append("blurry")
+        # whole-frame blur: cull's shoot/burst-relative veto alone fires on fog, dusk and silhouettes
+        # (low detail, not blur). It counts only when the scale-relative frame focus agrees:
+        # calibrated fog/overcast lakes 5-10, visibly soft/shaken frames 1.5-2.5.
+        fsh = fz.get("frame_sharp", 9)
         for v in r.get("veto", []):
             if v in ("too dark", "blown out"):
                 reasons.append(v)
-            elif v in ("blurry", "blurry face") and v not in reasons and "missed focus" not in reasons:
+            elif v == "blurry" and fsh < th["frame_blur"] and not judged:
+                reasons.append("blurry")
+            elif v == "blurry" and fsh < th["frame_soft"]:
+                soft.append("blurry")
+            elif v == "blurry face" and "missed focus" not in reasons and "blurry face" not in reasons:
                 soft.append(v)
         if fz.get("detail", 99) < 6 and r.get("lum", 1) < 0.12:
             reasons.append("accidental")
@@ -380,13 +408,24 @@ def judge(rows, faces, probs, groups, th=None):
                     "cat_prob": round(pr.get(cat, 0), 3), "faces": len(ppl), "people": ppl,
                     "frame_sharp": fz.get("frame_sharp"), "group": r.get("group"), "group_size": len(g),
                     "rank": r.get("rank", 1), "tech": r.get("tech"), "reasons": reasons, "soft": soft,
-                    "verdict": verdict})
+                    "verdict": verdict, "_th": th})
     return out
 
 
 def rebalance_duplicates(items):
     """A burst whose top technical pick is itself flagged (closed eyes / missed focus) should keep its
-    best *clean* frame instead: move the keep to the highest-ranked frame without hard reasons."""
+    best *clean* frame instead: move the keep to the highest-ranked frame without hard reasons.
+    Only near-identical frames shot close to the keeper are 'duplicate' (delete); a re-framed or
+    later shot of the same scene is just 'similar' (review) — that is a taste call, not a defect.
+    Calibrated on a 1.6k-frame card: ~1/3 of non-keeper burst frames reach structure-NCC ≥0.85 within 20 s."""
+    from cull import _sim_features
+    feats = {}
+
+    def sim(a, b):
+        fa = feats.setdefault(a["file"], _sim_features(a["thumb"]))
+        fb = feats.setdefault(b["file"], _sim_features(b["thumb"]))
+        return float((fa[0] * fb[0]).mean()) if fa is not None and fb is not None else 0.0
+
     groups = {}
     for it in items:
         if it["group_size"] > 1:
@@ -397,11 +436,19 @@ def rebalance_duplicates(items):
         keeper = clean[0] if clean else g[0]
         for it in g:
             rs = [x for x in it["reasons"] if x != "duplicate"]
+            sf = [x for x in it["soft"] if x != "similar"]
             if it is not keeper:
-                rs.append("duplicate")
-            it["reasons"] = rs
+                th = it.get("_th", {})
+                dt = abs((it["time"] or 0) - (keeper["time"] or 0))
+                if sim(it, keeper) >= th.get("dup_sim", 0.85) and dt <= th.get("dup_dt", 20):
+                    rs.append("duplicate")
+                else:
+                    sf.append("similar")
+            it["reasons"], it["soft"] = rs, sf
             it["verdict"] = "delete" if rs else ("review" if it["soft"] else "keep")
             it["burst_keeper"] = keeper["file"]
+    for it in items:
+        it.pop("_th", None)
     return items
 
 
@@ -465,7 +512,7 @@ for(const k in tabs){const b=document.createElement('button');b.textContent=tabs
 function card(d,check){
   const c=document.createElement('div');c.className='c'+(check&&keep.has(d.f)?' off':'');
   const im=document.createElement('img');im.className='t';im.loading='lazy';im.src=d.t;im.onclick=()=>{const z=document.getElementById('zoom');z.querySelector('img').src=d.t;z.style.display='flex'};c.appendChild(im);
-  if(d.face&&(d.r.concat(d.s).some(x=>/閉眼|焦|臉|低頭/.test(x)))){const f=document.createElement('img');f.className='fc';f.src=d.face;c.appendChild(f)}
+  if(d.face&&(d.r.concat(d.s).some(x=>/閉眼|半閉|焦|臉/.test(x)))){const f=document.createElement('img');f.className='fc';f.src=d.face;c.appendChild(f)}
   const m=document.createElement('div');m.className='m';
   if(check){const cb=document.createElement('input');cb.type='checkbox';cb.checked=!keep.has(d.f);cb.onchange=()=>{cb.checked?keep.delete(d.f):keep.add(d.f);c.classList.toggle('off',!cb.checked);save();count()};m.appendChild(cb)}
   const s=document.createElement('span');s.innerHTML=`${d.n}<br>`+d.r.map(x=>`<b class=tag>${x}</b>`).join(' ')+' '+d.s.map(x=>`<b class="tag s">${x}</b>`).join(' ');m.appendChild(s);c.appendChild(m);return c}
@@ -480,7 +527,8 @@ function render(){
     M.appendChild(bar);
     bar.querySelector('#exp').onclick=()=>{const t=D.filter(d=>d.v==='delete'&&!keep.has(d.f)).map(d=>d.f).join('\n')+'\n';const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));a.download='delete_confirmed.txt';a.click()};
     const by={};D.filter(d=>d.v==='delete').forEach(d=>{(by[d.r[0]]=by[d.r[0]]||[]).push(d)});
-    Object.entries(by).sort((a,b)=>b[1].length-a[1].length).forEach(([k,l])=>section(k,l,true).forEach(e=>M.appendChild(e)));count();
+    const P=['閉眼','失焦','臉糊','整張模糊','誤拍','太暗','大面積過曝','連拍重複'],pi=k=>{const i=P.findIndex(p=>k.startsWith(p));return i<0?99:i};
+    Object.entries(by).sort((a,b)=>pi(a[0])-pi(b[0])).forEach(([k,l])=>section(k,l,true).forEach(e=>M.appendChild(e)));count();
   }else if(cur==='rev'){
     const by={};D.filter(d=>d.v==='review').forEach(d=>{(by[d.s[0]]=by[d.s[0]]||[]).push(d)});
     Object.entries(by).forEach(([k,l])=>section(k,l,false).forEach(e=>M.appendChild(e)));
