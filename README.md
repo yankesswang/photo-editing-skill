@@ -22,27 +22,48 @@ A Claude Code skill that culls, corrects and colour-grades your photos like a ph
 
 ![bystander removal](docs/images/erase_DSC07991.jpg)
 
-同一張照片套上 10 種風格（`pe.py board`）：
+同一張照片套上多種風格（`pe.py board`）：
 
 ![style board](docs/images/style_board.jpg)
 
-## 它做什麼
+## 功能一覽
 
-| 步驟 | 指令 | 說明 |
-|---|---|---|
-| 選片 | `pe.py cull` | 依拍攝時間＋外觀相似度把連拍分組；否決模糊（人物照量**臉部**清晰度）、過暗、過曝；組內排名，產出附臉部特寫的總覽圖給 Claude 判斷「瞬間」 |
-| 分析 | `pe.py analyze` | 曝光統計、場景標籤（夜景／逆光／霧／人物…）、自動校正建議（中央加權或人臉測光、白平衡、高光陰影、依 ISO 降噪） |
-| 選風格 | `pe.py board` | 一張照片套全部風格並排比較 |
-| 修圖 | `pe.py develop` | 自動校正 ＋ 風格 ＋ 個別微調，輸出全解析度 JPG＋`.recipe.json`；吃 JPG／HEIC／RAW（ARW、DNG、CR3、NEF…） |
-| 整批一致 | `develop --consistent` | 依拍攝時間＋場景分組，組內共用白平衡和影調（曝光仍逐張），同一場景的照片排在一起不會一張暖一張冷 |
-| 天空 | recipe 的 `sky` | 救回洗白的天空：壓亮部、漸層、陰天加淡藍；有紋理檢查，白牆／岩石不會被當成天空 |
-| 連拍降噪 | `pe.py stack` | 手持連拍對齊（特徵＋ECC＋光流）後加權合併，移動物體自動排除；單張可用 NLM 降噪 |
-| 檢查 | `pe.py review` / `compare` | 整批「原圖｜成品」成對總覽，Claude 逐張看、逐張修 |
-| 局部調整 | recipe 的 `masks` | 人物、天空、漸層、橢圓、亮度範圍、顏色範圍遮罩（邊緣以 guided filter 貼合）；`pe.py masks` 用紅色疊圖驗證 |
-| 清除路人 | `pe.py people` / `erase` | YOLOv8 人物分割找出每個人並編號、猜主角／路人；LaMa 補背景（逐區域、補回顆粒），清完再偵測一次補清殘影；也能寫進 recipe 的 `erase` |
-| 多幀補背景 | `pe.py fill` | 有連拍或同場景另一張時，把另一張對齊後拿**真實像素**補路人擋住的地方（局部單應對齊＋色彩匹配），補不到的才用 LaMa |
-| 學風格 | `pe.py match` | 從喜歡的攝影師作品推出一組參數（只轉移調色，不轉移內容顏色） |
-| 匯出 | `pe.py xmp` | 風格或單張 recipe 匯出成 Lightroom Classic／Camera Raw 預設檔 |
+### 📥 讀取與取片
+- **JPG／HEIC／RAW 直接讀**：支援 Sony ARW、DNG、Canon CR3/CR2、Nikon NEF、Fuji RAF 等；RAW 亮度自動對齊相機內嵌 JPG，EXIF 照常讀取
+- **從 macOS「照片」圖庫取片**：依日期＋GPS 找出某次旅行的照片，分批匯出（SKILL.md 內有完整流程）
+- **iPhone 原檔遮罩**（`pe.py mattes`）：抽出 iPhone 自帶的皮膚／頭髮／牙齒／人物／天空遮罩，精度到髮絲
+
+### 🗂️ 選片與相簿整理
+- **選片**（`pe.py cull`）：連拍分組、否決模糊／過暗／過曝，組內挑最好的一張，人物照以**臉部**清晰度判斷
+- **相簿整理**（`pe.py organize`）：依活動（時間）＋內容（人像、風景、美食、夜景…）分類
+- **建議刪除**：閉眼、失焦、手震、太暗、過曝、誤拍、連拍重複；輸出可勾選的 HTML 報告，**絕不自動刪檔**
+
+### 🎨 修圖與調色
+- **自動校正**（`pe.py analyze`）：曝光（中央加權或人臉測光）、白平衡、高光陰影、依 ISO 降噪
+- **12 種攝影師風格**（`pe.py board` 並排比較）：底片 Portra、電影感、暗調秋景、黑白、夜景城市、日系明亮…
+- **整批一致**（`develop --consistent`）：同場景照片共用白平衡與影調，曝光仍逐張，不會一張暖一張冷
+- **天空修復**（recipe `sky`）：壓亮部救雲層、漸層減光、陰天加淡藍；白牆／岩石不會被誤當天空
+- **局部遮罩**（recipe `masks`）：人物、天空、漸層、橢圓、亮度範圍、顏色範圍、iPhone 遮罩
+- **從參考照片學風格**（`pe.py match`）：給一張喜歡的作品，推出一組調色參數
+
+### 👤 人像
+- **輕微美顏**：以 iPhone 皮膚遮罩讓臉維持相機原色，只做輕微磨皮（保留毛孔）、淡化黑眼圈、牙齒去黃、稍微瘦臉
+- **`vivid-iphone` 風格**：背景鮮豔、臉保持原樣，強度已依實際退件經驗調到「看不出修過」
+
+### 🌙 降噪
+- **連拍疊合降噪**（`pe.py stack`）：手持連拍自動對齊（特徵點＋ECC＋光流）後合併，移動的人車自動排除；3 張約降噪 45%
+- **單張 NLM 降噪**：夜景／高 ISO 用，比預設更強且保留邊緣
+
+### 🧹 清除路人
+- **人物偵測與編號**（`pe.py people`）：YOLOv8 分割每個人，自動猜主角／路人
+- **AI 補背景**（`pe.py erase`）：LaMa 補上路人位置，清完再偵測一次補清殘影
+- **用真實像素補**（`pe.py fill`）：有連拍時拿另一張的真實背景補，不靠 AI 生成；對不齊或貼到別人時會警告
+
+### 📤 輸出
+- **全解析度 JPG**＋每張的 `.recipe.json`（記錄所有參數，可重現）
+- **Lightroom 預設檔**（`pe.py xmp`）：風格或單張參數匯出成 `.xmp`，可匯入 Lightroom Classic／Camera Raw
+- **匯入照片 App**（`pe.py photos`）：每個資料夾一本相簿，分批匯入、可重跑不重複，開了 iCloud 照片就自動同步到手機
+- **前後對照**（`pe.py review`／`compare`／`contact`）：整批「原圖｜成品」總覽，Claude 逐張看過再交件
 
 引擎實作的 Lightroom 面板：白平衡、曝光、對比、亮部／陰影／白色／黑色、紋理、清晰度、去朦朧、細節飽和度／飽和度、點曲線（RGB 分色）、8 色 HSL、顏色分級（陰影／中間調／亮部／整體）、黑白混色、銳利化、降噪、暗角、顆粒、旋轉／拉直／裁切、局部遮罩。參數名稱和範圍都對應 Lightroom。
 
@@ -60,6 +81,8 @@ A Claude Code skill that culls, corrects and colour-grades your photos like a ph
 | `night-city` | 夜景、室內、高 ISO；深藍陰影＋暖色燈光 |
 | `nordic-matte` | 極簡、雪、海岸；冷調霧面 |
 | `golden-hour` | 日落、人像；暖金色光暈 |
+| `film-portra-clear` | 晴天旅行；Portra 色調但保留藍天 |
+| `vivid-iphone` | iPhone 照片；鮮豔背景＋臉維持原色的輕微美顏（搭配 `--no-auto`） |
 
 風格就是 `styles/*.json`，可以自己加；`pe.py xmp <風格>` 可以帶進 Lightroom 用。
 
