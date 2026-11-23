@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["numpy", "opencv-python-headless", "pillow"]
+# dependencies = ["numpy", "opencv-python-headless>=4.8,<5", "pillow"]
 # ///
 """photo-edit CLI — Lightroom-style photo editing driven by recipes.
 
+  pe.py doctor                                  report platform and feature prerequisites
   pe.py styles                                  list looks
   pe.py analyze IMG...                          stats + scene tags + auto correction (JSON)
   pe.py board IMG [--styles a,b] -o board.jpg   one photo rendered in many looks (to choose)
@@ -53,7 +54,7 @@ def expand(paths):
     out = []
     for p in paths:
         if p.startswith("@"):  # @list.txt: one path per line (e.g. cull picks.txt)
-            out += expand([ln.strip() for ln in Path(p[1:]).read_text().splitlines()
+            out += expand([ln.strip() for ln in Path(p[1:]).read_text(encoding="utf-8-sig").splitlines()
                            if ln.strip() and not ln.startswith("#")])
             continue
         pp = Path(p)
@@ -74,14 +75,14 @@ def load_style(name):
         p = STYLES_DIR / f"{name}.json"
     if not p.exists():
         sys.exit(f"style not found: {name}  (see: pe.py styles)")
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
 def load_json_arg(s):
     if not s:
         return {}
     p = Path(s)
-    return json.loads(p.read_text()) if p.exists() else json.loads(s)
+    return json.loads(p.read_text(encoding="utf-8-sig")) if p.exists() else json.loads(s)
 
 
 def all_style_names():
@@ -96,6 +97,8 @@ def label(img, text, size=None):
     font = None
     for f in ("/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Medium.ttc",
               "/System/Library/Fonts/Helvetica.ttc",
+              str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msjh.ttc"),
+              str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf"),
               "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         try:
             font = ImageFont.truetype(f, fs)
@@ -145,6 +148,33 @@ def default_jobs():
 
 
 # ----------------------------------------------------------------------------- commands
+def cmd_doctor(a):
+    """Report runtime capabilities without downloading models or opening Photos."""
+    import importlib.util
+    import platform
+    import shutil
+
+    packages = {name: importlib.util.find_spec(name) is not None for name in
+                ("rawpy", "pillow_heif", "torch", "ultralytics", "mediapipe", "transformers")}
+    mac = sys.platform == "darwin"
+    print(json.dumps({
+        "platform": platform.system(), "python": platform.python_version(),
+        "executable": sys.executable, "skill_dir": str(HERE.parent),
+        "default_output": str(DEFAULT_OUT), "optional_packages_present": packages,
+        "features": {
+            "core_editing": True,
+            "raw": packages["rawpy"],
+            "heic": packages["pillow_heif"] or (mac and bool(shutil.which("sips"))),
+            "extract_iphone_mattes": mac and bool(shutil.which("swiftc")),
+            "apple_photos": mac and bool(shutil.which("osascript")),
+            "people_erase_fill": packages["torch"] and packages["ultralytics"],
+            "organize": all(packages[n] for n in ("mediapipe", "torch", "transformers")),
+            "portrait": packages["mediapipe"],
+        },
+        "note": "Presence checks only; model downloads, package imports, OS permissions and AI image-viewing capability are not tested.",
+    }, ensure_ascii=False, indent=2))
+
+
 def cmd_styles(a):
     for n in all_style_names():
         s = load_style(n)
@@ -157,7 +187,7 @@ def cmd_analyze(a):
     res = [autotone.analyze(str(p)) for p in expand(a.images)]
     txt = json.dumps(res if len(res) > 1 else res[0], ensure_ascii=False, indent=1)
     if a.out:
-        Path(a.out).write_text(txt)
+        Path(a.out).write_text(txt, encoding="utf-8")
     print(txt)
 
 
@@ -189,7 +219,7 @@ def _develop_one(job):
     E.save_image(out, dst, path, quality)
     side = {"source": str(path), "style": style.get("name"), "strength": strength, "auto": auto,
             "adjust": adjust, "recipe": recipe, **({"group": sync["_group"]} if sync else {})}
-    dst.with_suffix(".recipe.json").write_text(json.dumps(side, ensure_ascii=False, indent=1))
+    dst.with_suffix(".recipe.json").write_text(json.dumps(side, ensure_ascii=False, indent=1), encoding="utf-8")
     return f"{dst}  ({time.time() - t:.1f}s)"
 
 
@@ -315,6 +345,10 @@ def cmd_review(a):
 
 def apple_mattes_bin():
     """Compile (once) the ImageIO matte extractor; needs macOS + swiftc (Xcode command line tools)."""
+    if sys.platform != "darwin":
+        raise RuntimeError("Extracting iPhone mattes requires macOS + swiftc. "
+                           "On Windows/Linux, copy an existing <stem>.mattes folder next to the image "
+                           "or use masks --mask subject --mask sky instead.")
     import subprocess
     src = HERE / "apple_mattes.swift"
     out = Path.home() / ".cache/photo-edit/apple_mattes"
@@ -405,8 +439,8 @@ def cmd_cull(a):
          "params": {"gap_s": a.gap, "strict": a.strict, "keep_per_group": a.keep},
          "group_list": [[{k: r[k] for k in ("file", "rank", "tech", "sharp", "lum", "clip_hi", "faces", "veto")}
                          for r in sorted(g, key=lambda r: r["rank"])] for g in groups]},
-        ensure_ascii=False, indent=1))
-    (out / "picks.txt").write_text("\n".join(picks) + "\n")
+        ensure_ascii=False, indent=1), encoding="utf-8")
+    (out / "picks.txt").write_text("\n".join(picks) + "\n", encoding="utf-8")
     pickset = set(picks)
     # burst sheets: one row per multi-frame group (green = technical pick, red = vetoed)
     sz = a.thumb
@@ -490,7 +524,7 @@ def cmd_organize(a):
 
     by_v = {v: [it for it in items if it["verdict"] == v] for v in ("keep", "review", "delete")}
     for v, lst in by_v.items():
-        (out / f"{v}.txt").write_text("".join(it["file"] + "\n" for it in lst))
+        (out / f"{v}.txt").write_text("".join(it["file"] + "\n" for it in lst), encoding="utf-8")
     reasons = {}
     for it in items:
         for r_ in it["reasons"] + it["soft"]:
@@ -503,9 +537,9 @@ def cmd_organize(a):
         e = summary["events"].setdefault(it["event"], {})
         e[it["category_zh"]] = e.get(it["category_zh"], 0) + 1
         summary["categories"][it["category_zh"]] = summary["categories"].get(it["category_zh"], 0) + 1
-    (out / "organize.json").write_text(json.dumps({"summary": summary, "items": items}, ensure_ascii=False, indent=1))
+    (out / "organize.json").write_text(json.dumps({"summary": summary, "items": items}, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    # ---- contact sheets (for Claude to verify): one series per delete/review reason, one per category
+    # ---- contact sheets (for the AI assistant to verify): one series per delete/review reason, one per category
     sz, per = a.thumb, a.cols * a.rows_per_sheet
     for old in list(out.glob("del_*.jpg")) + list(out.glob("cat_*.jpg")):
         old.unlink()
@@ -677,7 +711,7 @@ def cmd_match(a):
     rec = match.match_recipe(str(a.image), [str(p) for p in expand(a.ref)], a.strength)
     txt = json.dumps(rec, ensure_ascii=False, indent=1)
     if a.out:
-        Path(a.out).write_text(txt)
+        Path(a.out).write_text(txt, encoding="utf-8")
     print(txt)
 
 
@@ -689,7 +723,7 @@ def cmd_xmp(a):
     name = a.name or src.get("name", "photo-edit")
     dst = a.out or str(DEFAULT_OUT / "lightroom-presets" / f"{name}.xmp")
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
-    Path(dst).write_text(xmp.recipe_to_xmp(src, name, a.group))
+    Path(dst).write_text(xmp.recipe_to_xmp(src, name, a.group), encoding="utf-8")
     print(dst)
 
 
@@ -714,6 +748,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
 
+    sp.add_parser("doctor", help="report platform and optional feature prerequisites (no model downloads)").set_defaults(fn=cmd_doctor)
     sp.add_parser("styles").set_defaults(fn=cmd_styles)
 
     p = sp.add_parser("analyze"); p.add_argument("images", nargs="+"); p.add_argument("-o", "--out")

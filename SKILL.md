@@ -1,6 +1,9 @@
 ---
 name: photo-edit
-description: 把照片（JPG／HEIC／RAW）修成攝影師在 Lightroom 調過風格的成品。大量照片先選片（連拍分組、模糊／曝光否決、挑最好的一張），逐張分析（曝光／白平衡／高光陰影／雜訊）先校正，再套上攝影師風格（電影感、底片 Portra、暗調秋景、黑白、夜景城市、日系明亮…）或從參考照片學風格，必要時用局部遮罩（主體提亮、天空、漸層、顏色範圍）、救回洗白的天空、整批同場景色調一致、夜景連拍疊合降噪；人像可用 iPhone 原檔自帶的皮膚／頭髮／牙齒遮罩做輕微美顏（磨皮、去黑眼圈、牙齒美白、稍微瘦臉）；Claude 會實際看前後對照圖修正，輸出全解析度 JPG＋可匯入 Lightroom 的 .xmp 預設檔，也可直接匯入 macOS 照片 App（同步 iCloud）。Use when the user wants photos culled / selected, edited / color graded / retouched "like a photographer", Lightroom-style presets, batch editing a folder or SD card, matching a reference photo's look, RAW files (ARW/DNG/CR3/NEF), noisy night shots / bursts, consistent look across a set, organising an album (categories by event/content, which photos to delete: closed eyes, missed focus, blur, duplicates), or says 選片、修圖、調色、套濾鏡、修成攝影師風格、Lightroom 預設、相簿整理、照片分類、哪些照片該刪、閉眼、沒對到焦、存到 iCloud 照片、匯入照片 App、修人像、美顏、磨皮、瘦臉、iPhone 照片、從照片 App 找某次旅行的照片.
+description: >-
+  選片、相簿整理與攝影師風格修圖，支援 JPG、HEIC、RAW、批次調色、參考圖配色、局部遮罩、人像微調、夜景降噪與路人清除。
+  當使用者要求照片選片、修圖、調色、Lightroom 預設或整理相簿時使用；由具備圖片檢視能力的 AI 助理檢查前後對照。
+  Cull, organize and edit photos with a portable CLI and visual-review workflow; export JPG, recipe JSON and Lightroom XMP presets.
 ---
 
 # photo-edit — 攝影師風格修圖
@@ -8,11 +11,20 @@ description: 把照片（JPG／HEIC／RAW）修成攝影師在 Lightroom 調過�
 用 numpy/OpenCV 實作的 Lightroom 面板（基本、色調曲線、HSL、顏色分級、細節、效果、黑白、局部遮罩）。
 參數名稱和範圍都跟 Lightroom 一致，所以每張成品都有一份看得懂的 recipe，也能匯出成 Lightroom 預設檔。
 
-**修圖的核心是 Claude 自己用眼睛看。** 腳本負責算，Claude 負責判斷：每一輪都要 `Read` 渲染出來的對照圖，
+**修圖的核心是 AI 助理自己用眼睛看。** 腳本負責算，AI 助理負責判斷：每一輪都要用當前環境的圖片檢視工具開啟渲染出來的對照圖，
 按檢查清單挑問題、改參數、再看一次。不要沒看圖就交件。
 
-`SKILL_DIR` = 這份檔案所在的資料夾（通常是 `~/.claude/skills/photo-edit`）。
-所有指令：`python3 $SKILL_DIR/scripts/pe.py <cmd>`（缺套件就改用 `uv run $SKILL_DIR/scripts/pe.py <cmd>`，依賴寫在 PEP 723 header）。
+## 執行環境與工具適配（每次開工先確認）
+
+這份流程適用於能讀取本機檔案、執行命令、檢視圖片的 AI 助理。工具名稱由宿主決定，不依賴某個產品的 `Read` 或 shell 工具。只有文字能力或不能執行命令時，由使用者執行 CLI 並提供對照圖；沒有看過圖片就明確說明尚未完成視覺檢查。
+
+1. 確認作業系統、shell、專案絕對路徑、可用的 Python／uv，以及圖片檢視能力。
+2. `SKILL_DIR` 指這份檔案所在資料夾，不假設任何 AI 產品的安裝目錄。先切換至此目錄並執行 `uv run scripts/pe.py doctor`，以下 `pe.py` 都是 `uv run scripts/pe.py` 的簡寫。若使用已安裝依賴的 Python，Windows 通常用 `python`，macOS／Linux 通常用 `python3`；先驗證可用指令。
+3. 讀取 [執行環境指南](references/runtime-guide.md)，依本次功能選擇額外依賴。PEP 723 只會安裝核心套件；選配套件要用 `uv run --with 套件 scripts/pe.py ...`，不要假設全域 pip 安裝會進入 uv 的隔離環境。
+4. 選片 → 分析 → 風格板 → 預覽 → 視覺檢查 → 修正 → 全解析度輸出，三個平台共用此流程。macOS 專屬的照片 App 和遮罩抽取只在需要時執行；Windows／Linux 使用使用者提供的照片資料夾，已有 `.mattes` sidecar 則可一併讀取。
+5. 路徑含空白要加引號；相片清單、JSON 與報告統一 UTF-8。PowerShell 的清單參數寫成 `"@out/cull/picks.txt"`；JSON 優先寫入 UTF-8 檔案再傳給 `--adjust`／`--per-file`，避免 shell 引號差異。
+6. 下面的 `photos` 是輸入資料夾範例，請替換為實際路徑。Windows 可用 `E:/DCIM`，Linux／macOS 使用實際掛載路徑。暫存輸出使用專案的 `out/` 或系統暫存目錄，不硬編碼 `/tmp`。預設輸出根目錄為使用者家目錄下的 `Pictures/PhotoEdit`，也可用 `-o` 指定。
+7. 相簿整理預設只出報告；Windows 要建立實體分類目錄時優先用 `--apply copy`，`--apply link` 需要環境允許符號連結。不為了此功能要求使用者提升權限。
 
 ## 個人審美檔（每次開工先讀）
 
@@ -49,18 +61,18 @@ description: 把照片（JPG／HEIC／RAW）修成攝影師在 Lightroom 調過�
 
 ### 0. 選片（照片多於 ~30 張時先做）
 ```bash
-pe.py cull "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_cull
+pe.py cull "photos" -o out/cull
 ```
 - 腳本負責**技術面**：依拍攝時間＋外觀相似度把連拍分組 → 否決（模糊、暗到救不回、大面積過曝）→ 組內依清晰度＋曝光排名 → `picks.txt`（每組第 1 名）＋ `cull.json`。
   1662 張約 6–7 分鐘，結果有快取，重跑只算新照片。`--gap` 秒數／`--max-hash` 相似度門檻可調分組鬆緊。
-- Claude 負責**瞬間**：`Read` 輸出的 `bursts_*.jpg`（每列一組連拍；綠框＝技術推薦，紅框＝否決）。
+- AI 助理負責**瞬間**：用圖片檢視工具開啟 輸出的 `bursts_*.jpg`（每列一組連拍；綠框＝技術推薦，紅框＝否決）。
   有人物的組，依下列權重逐項判斷、覆寫技術推薦：
   瞬間與情緒 30%、清晰對焦 20%、曝光 15%、構圖 15%、光影 10%、色彩 5%、乾淨度 5%。
   - 一票否決：閉眼、臉被大面積遮住、主體糊掉、表情扭曲（要看臉，不要憑縮圖印象）。
   - 「瞬間」是動作或表情的巔峰定點，不是「正在動」；看鏡頭、笑開、手勢到位的那張通常勝過轉頭中的過渡幀。
-- 再 `Read` `picks_*.jpg` 做整體取捨：重複的景點只留最好的、沒故事的記錄照可以拿掉。
+- 再 用圖片檢視工具開啟 `picks_*.jpg` 做整體取捨：重複的景點只留最好的、沒故事的記錄照可以拿掉。
   使用者指定張數時照張數挑；沒指定就交出全部入選，並說明各剔除了多少、為什麼。
-- 把最終名單寫成一個檔案（一行一個路徑），之後用 `pe.py develop @final.txt ...` 處理。
+- 把最終名單寫成一個檔案（一行一個路徑），之後用 `pe.py develop "@final.txt" ...` 處理。
 - 實跑經驗（1645 張旅行照 → 158 張）：
   - 有人臉的照片，清晰度是量**臉部**（背景清楚但臉糊掉的會被否決），總覽右下角附臉部特寫，看表情不用放大。
   - 人物組約四成要改選技術推薦：技術分數常挑到轉頭、講電話、人很小的那張。
@@ -68,6 +80,7 @@ pe.py cull "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_cul
   - 相機直拿但沒記方向的照片會橫躺，加 `"rotate": 90`（或 270）轉正。
 
 ### 0.5 從 macOS「照片」圖庫取片（使用者說「我照片裡的某次旅行」）
+- 僅適用 macOS；Windows／Linux 跳過本節，改用已匯出或同步到本機的資料夾。
 - 圖庫資料庫（`Photos.sqlite`）被 macOS 權限擋住，讀不到也複製不到 → 改用 AppleScript／JXA 控制「照片」App。
 - 找日期範圍：JXA 一次讀全部 `mediaItems` 的 `date()`、`location()`、`filename()`（2.6 萬張約 1 分鐘），用 GPS 範圍＋日期鎖定旅程；
   同一張常出現兩筆（同檔名同時間），先用「檔名＋時間」去重。
@@ -78,7 +91,7 @@ pe.py cull "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_cul
 - 先匯出 2048px 縮圖選片，選中的再匯出全解析度。HEIC 可以直接丟給 `pe.py`（有裝 `pillow-heif` 直接讀，沒裝自動用 `sips` 轉）。
 
 ### 0.8 RAW 檔（ARW / DNG / CR3 / NEF / RAF…）
-有 RAW 就用 RAW：`pe.py` 的所有指令都直接吃 RAW（需要 `pip install rawpy`），高光、陰影能救的範圍比 JPG 大很多。
+有 RAW 就用 RAW：`pe.py` 的所有指令都直接吃 RAW（使用 uv 時加 `--with rawpy`；使用自建虛擬環境時在該環境安裝 rawpy），高光、陰影能救的範圍比 JPG 大很多。
 - 解法：rawpy（LibRaw）用相機白平衡、線性 16-bit 解出，再套一條「相機基準曲線」：**以 RAW 內嵌的相機 JPG 為準**對齊中間調亮度
   （每台相機測光習慣不同，內嵌 JPG 就是相機認為的「正常」），再加一層輕微 S 曲線＋飽和度（類似 Lightroom 的 Adobe Color）。
 - EXIF（ISO、鏡頭、時間）從內嵌 JPG 讀，ISO 降噪、`--consistent` 分組都照常運作。預覽（`--preview`／分析）用 half-size 解碼，很快；全解析度 24MP 約 15–20 秒。
@@ -87,7 +100,7 @@ pe.py cull "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_cul
 
 ### 1. 了解這批照片
 ```bash
-pe.py contact @final.txt -o /tmp/.../contact.jpg --cols 8   # 或目錄、glob
+pe.py contact "@final.txt" -o out/contact.jpg --cols 8   # 或目錄、glob
 pe.py analyze IMG1 IMG2 ...      # 曝光統計、場景標籤（night / backlit / foggy / people / foliage…）、auto_correction
 ```
 搞清楚：拍什麼（旅行／人像／街拍／風景／夜景）、光線（陰天、逆光、鎢絲燈）、常見問題（灰、暗、歪、雜訊）。
@@ -96,19 +109,19 @@ pe.py analyze IMG1 IMG2 ...      # 曝光統計、場景標籤（night / backlit
 - 使用者指定了風格、攝影師或參考圖 → 照做（參考圖見第 5 步）。
 - 否則挑 2–3 張有代表性的照片做風格板：
   ```bash
-  pe.py board IMG --size 700 -o /tmp/.../board.jpg            # 全部風格
+  pe.py board IMG --size 700 -o out/board.jpg            # 全部風格
   pe.py board IMG --styles moody-autumn,film-portra,cinematic-teal-orange
   ```
-  `Read` 風格板，依 `pe.py styles` 和 `references/editing-guide.md` 的「場景 → 風格建議」挑一個；拿不準時把風格板給使用者選（AskUserQuestion，附 2–3 個推薦）。
+  用圖片檢視工具開啟 風格板，依 `pe.py styles` 和 `references/editing-guide.md` 的「場景 → 風格建議」挑一個；拿不準時把風格板給使用者選（AskUserQuestion，附 2–3 個推薦）。
 - 風格強度：`--strength 0.6`（淡）～`1.2`（重），對應 Lightroom 預設檔的 Amount。
 
 ### 3. 預覽＋逐張檢查（最重要）
 ```bash
-pe.py develop IMG... --style STYLE --preview 1200 -o /tmp/.../preview     # 1200px 一張 <1 秒
-pe.py review ORIGINAL_DIR /tmp/.../preview --per-sheet 6                  # 整批「原圖｜成品」成對排版
-pe.py compare ORIG v1.jpg v2.jpg --labels "orig|v1|v2" --sep "|" -o /tmp/.../cmp.jpg
+pe.py develop IMG... --style STYLE --preview 1200 -o out/preview     # 1200px 一張 <1 秒
+pe.py review ORIGINAL_DIR out/preview --per-sheet 6                  # 整批「原圖｜成品」成對排版
+pe.py compare ORIG v1.jpg v2.jpg --labels "orig|v1|v2" --sep "|" -o out/cmp.jpg
 ```
-`Read` 每張 review sheet，用「修圖紀律 A」的簡報對照，逐項檢查 `references/editing-guide.md` 的檢查清單與**失敗訊號**。
+用圖片檢視工具開啟 每張 review sheet，用「修圖紀律 A」的簡報對照，逐項檢查 `references/editing-guide.md` 的檢查清單與**失敗訊號**。
 有疑慮的地方（膚色、邊緣、天空漸層、雜訊）另外裁 100% 局部來看，縮圖看不出光暈和色階斷層。
 
 實跑經驗（同一批旅行照）：
@@ -131,7 +144,7 @@ pe.py compare ORIG v1.jpg v2.jpg --labels "orig|v1|v2" --sep "|" -o /tmp/.../cmp
 
 **整批一致（`--consistent`，交件前建議都加）**：自動校正是逐張算的，同一個場景裡相鄰兩張會一張比較暖、一張陰影拉比較多，排在相簿裡就不像同一組。
 ```bash
-pe.py develop @final.txt --style STYLE --consistent            # --group-gap 600：相隔超過幾秒就分新組
+pe.py develop "@final.txt" --style STYLE --consistent            # --group-gap 600：相隔超過幾秒就分新組
 ```
 - 分組：依拍攝時間排序，相隔 >10 分鐘、日夜切換、或整張平均顏色／亮度跳很大（Lab 距離 >18）就切一組；會印出每組張數、時間、色溫範圍。
 - 組內共用：`temp`、`tint`、`highlights`、`shadows`、`whites`、`blacks`、`contrast`、`dehaze` 取組內中位數。
@@ -141,7 +154,7 @@ pe.py develop @final.txt --style STYLE --consistent            # --group-gap 600
 
 ### 4. 全解析度輸出
 ```bash
-pe.py develop @final.txt --style STYLE --per-file fixes.json        # 不加 --preview = 全解析度
+pe.py develop "@final.txt" --style STYLE --per-file fixes.json        # 不加 --preview = 全解析度
 pe.py xmp STYLE                                                      # 匯出 Lightroom 預設檔
 pe.py xmp OUT/DSC07761_moody-autumn.recipe.json --name "Hallstatt fog"
 ```
@@ -249,7 +262,7 @@ pe.py mattes IMG_7532.HEIC -o DIR      # -> DIR/IMG_7532.mattes/{portrait,skin,h
 - 需要 macOS＋`swiftc`（第一次會編譯 `scripts/apple_mattes.swift` 到 `~/.cache/photo-edit/`）。
 - 遮罩是感光元件方向，`meta.json` 記 EXIF orientation，讀取時自動轉正；裁切／旋轉也會跟著套到遮罩上。
 - **sidecar 規則**：`develop` 找 `<影像 stem>.mattes/`（跟影像同資料夾）。影像改過名就把 `.mattes` 資料夾改成同樣的 stem。
-- 只有「照片」App 匯出**原檔**（`with using originals`）才有遮罩；照片 App 一般匯出的 JPG 會把它們丟掉。實際做法：原檔抽遮罩，像素用 `sips -s format jpeg` 轉出來或照片 App 一般匯出的 JPG（兩者幾何相同），抽完就刪原檔。
+- 只有「照片」App 匯出**原檔**（`with using originals`）才有遮罩；照片 App 一般匯出的 JPG 會把它們丟掉。實際做法：原檔抽遮罩，像素用 `sips -s format jpeg` 轉出來或照片 App 一般匯出的 JPG（兩者幾何相同），保留原檔；若要清理暫存匯出副本，先確認它不是唯一一份照片，並依使用者授權處理。
 - 遮罩也能當局部遮罩用：`{"type": "matte", "name": "skin"}`（沒有 sidecar 時是空遮罩，對其他相機安全）。
 
 ### 人像參數（`vivid-iphone` 已內建定案值）
@@ -303,8 +316,8 @@ pe.py develop OUT/merged.jpg --style night-city          # 再照常修圖（降
 ## 清除路人
 
 ```bash
-pe.py people IMG -o /tmp/.../people.jpg           # 編號疊圖：綠＝主角（預設保留）、紅＝路人（預設清除）
-pe.py erase IMG --preview 1200 -o /tmp/.../erased # 快速試；--remove 2,5 指定編號；--keep 0 只留 0 號
+pe.py people IMG -o out/people.jpg           # 編號疊圖：綠＝主角（預設保留）、紅＝路人（預設清除）
+pe.py erase IMG --preview 1200 -o out/erased # 快速試；--remove 2,5 指定編號；--keep 0 只留 0 號
 ```
 或直接寫進個別微調檔，修圖時第一步就先清除（在任何調色之前，用原始像素補背景）：
 ```json
@@ -318,7 +331,7 @@ pe.py erase IMG --preview 1200 -o /tmp/.../erased # 快速試；--remove 2,5 指
 - 模型第一次使用時自動下載到 `~/.cache/photo-edit/models/`（約 230MB）。
 
 使用原則（**這是在發明不存在的背景**，所以比調色更要小心）：
-- 只清**路人**，絕不動主角；主角／路人的自動判斷只是猜測，先 `Read` 編號疊圖，不對就用 `remove`／`keep` 指定。
+- 只清**路人**，絕不動主角；主角／路人的自動判斷只是猜測，先 用圖片檢視工具開啟 編號疊圖，不對就用 `remove`／`keep` 指定。
 - **編號以當下 `pe.py people` 的輸出為準**：編號依面積排序，信心度接近門檻的小人可能這次有、下次沒有，所以指定「保留誰」（`keep`，通常是最大的幾個）比指定「清除誰」穩。
 - 被物體遮斷的部分（腿在長椅後、鞋子從椅子下露出）模型不會當成人 → 清完看到殘留就用 `extra` 補一個框：`--extra '[[x,y,w,h]]'`（0–1 比例座標）。
 - 路人跟主角重疊、或佔畫面很大（例如擋住半個建築）→ 不要清，補出來的東西會穿幫。
@@ -347,7 +360,7 @@ pe.py fill TARGET.JPG --source OTHER1.JPG OTHER2.JPG --keep 0 -o OUT_DIR   # 編
 
 使用者要「整理相簿」「分類」「哪些可以刪」而**不一定要修圖**時用這個；要修圖的話它也可以取代第 0 步選片。
 ```bash
-pe.py organize "/Volumes/NO NAME/DCIM/103MSDCF" -o ~/Pictures/PhotoEdit/103MSDCF_organize
+pe.py organize "photos" -o out/organize
 pe.py organize DIR --apply link          # 另外建 album/<日期活動>/<類別>/ 與 _建議刪除/<原因>/（捷徑，不搬原檔）
 pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，用來抽查分類
 ```
@@ -359,7 +372,7 @@ pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，�
 - 輸出：`index.html`（離線報告，建議刪除預設打勾，取消＝留下，可匯出 `delete_confirmed.txt`）、`organize.json`、`keep/review/delete.txt`、`del_<原因>_NN.jpg` 總覽圖（附臉部特寫與數值）。
 - 1600 張約 15 分鐘（首次會下載 CLIP 約 600MB、臉部模型約 4MB）；結果有快取，重跑只算新照片。門檻可用 `--thresholds '{"blink": 0.55}'` 調。
 
-**Claude 一定要看 `del_*.jpg` 再交件**，數字只是初篩：
+**AI 助理一定要看 `del_*.jpg` 再交件**，數字只是初篩：
 - 閉眼：臉部特寫裡眼睛真的閉上才算；笑到瞇眼、往下看手機是常見誤判，好看的就從清單移除。
 - 失焦／模糊：霧、黃昏剪影、夜景本來就細節少，不是模糊；有疑慮就裁 100% 看臉。
 - 連拍重複：確認保留的那張（`keep####`）真的比較好；表情更好的話就換。
@@ -368,7 +381,7 @@ pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，�
   - 臉部偵測信心 <0.75 幾乎都是雕像、裝飾、礦石，已排除；≥0.75 仍會有畫像／雕像的臉，看到就忽略。
   - 霧、陰天湖景、黃昏剪影的細節分數仍高（5–10），不會被當成模糊；真正手震／整張失焦的約 1.5–2.5。
   - 相機時鐘沒設的話，活動日期會錯（這張卡顯示 2014 年），分段仍然正確。
-- **絕不自己刪檔。** 交件時報告「N 張中建議刪 X 張（各原因幾張）、待確認 Y 張」並附 `index.html` 路徑；使用者確認後才依 `delete_confirmed.txt` 處理，且只移到垃圾桶（`mv` 到 `~/.Trash`），不用 `rm`。
+- **絕不自己刪檔。** 交件時報告「N 張中建議刪 X 張（各原因幾張）、待確認 Y 張」並附 `index.html` 路徑；使用者確認後才依 `delete_confirmed.txt` 處理，並使用當前作業系統的資源回收筒／垃圾桶工具。不要把 `mv` 到 `~/.Trash` 當成跨平台方案；沒有可用的回收工具時保留清單交由使用者處理，不永久刪除。
 
 ## 自訂／新增風格
 `styles/*.json` 一檔一風格，格式見 `references/editing-guide.md` 的「recipe 欄位」。
@@ -378,6 +391,6 @@ pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，�
 - 這是 Lightroom 演算法的近似，不是 Adobe 的引擎；同一組數字在 Lightroom 裡會接近但不會像素級一致。
 - JPG 輸入（相機已經套過曲線）高光救回空間小，已經死白的天空救不回細節；有 RAW 就用 RAW（但沒有鏡頭變形／暗角校正）。
 - 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影、很小的人可能偵測不到，這時用 `boxes` 手動指定。
-- 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，要靠 Claude 看圖判斷。
+- 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，要靠 AI 助理看圖判斷。
 - `xmp` 匯出不包含局部遮罩和清除路人（Lightroom 預設檔的遮罩格式不同），只匯出全域設定。
 - 清除路人是生成式補圖：小路人在單純背景（石板路、牆面、天空）上效果好；大面積、複雜結構（人群、建築細節）可能穿幫。

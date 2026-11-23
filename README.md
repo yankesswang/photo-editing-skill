@@ -1,171 +1,359 @@
-# photo-edit-skill
+<div align="center">
 
-讓 Claude 像攝影師一樣修照片的 [Claude Code](https://claude.com/claude-code) skill：從一整張 SD 卡選片、逐張校正、套上 Lightroom 式的風格，最後**親眼看前後對照再修正**，輸出全解析度 JPG 和可匯入 Lightroom 的 `.xmp` 預設檔。
+# <img src="docs/images/logo.svg" height="48" align="top" alt="Camera icon"> photo-edit-skill
 
-A Claude Code skill that culls, corrects and colour-grades your photos like a photographer — a numpy/OpenCV re-implementation of the Lightroom develop panels, driven by Claude's visual judgement.
+**Give your AI a photographer's eye.**
 
-![Hallstatt — before / after](docs/images/DSC07991_compare.jpg)
+From a full memory card to a collection worth keeping.<br>
+AI-powered culling, Lightroom-style grading, and visual review in one skill.
 
-## 實際效果
+**12 built-in looks · Visual review and refinement · Full-resolution JPEG + JSON recipes + Lightroom XMP**
 
-以下都是同一趟旅行（Sony a5100 JPG，未經任何前處理）用這個 skill 修出來的成品。左邊原圖、右邊修後。
-從 1645 張選出 158 張；白天用 `film-portra`、夜間用 `night-city`，再依場景個別修正。
+[![Python: 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](#get-started)
+[![Built-in styles: 12](https://img.shields.io/badge/Styles-12-F59E0B)](#built-in-styles)
+[![Codex: workflow](https://img.shields.io/badge/Codex-Workflow-10A37F)](#working-with-ai-assistants)
+[![Claude Code: workflow](https://img.shields.io/badge/Claude_Code-Workflow-D97757)](#working-with-ai-assistants)
+[![Gemini CLI: workflow](https://img.shields.io/badge/Gemini_CLI-Workflow-4285F4)](#working-with-ai-assistants)
+[![Processing: local](https://img.shields.io/badge/Processing-Local-4338CA)](#how-it-works)
 
-| | |
-|---|---|
-| ![](docs/images/DSC07766_compare.jpg) 霧中的國王湖：陰天專用修正（壓黑位、加對比、修掉灰天變米黃） | ![](docs/images/DSC07663_compare.jpg) 霧與秋色：保留空氣感，色彩更有底片味 |
-| ![](docs/images/DSC07277_compare.jpg) 英雄廣場：晴天的底片藍天 | ![](docs/images/DSC07550_compare.jpg) 日落剪影：天空層次拉出來，剪影維持黑色 |
-| ![](docs/images/DSC08496_compare.jpg) 普拉特夜景：深藍夜空＋乾淨暖光 | ![](docs/images/DSC08306_compare.jpg) 自然史博物館：室內低光降噪、壓住亮部 |
-| ![](docs/images/DSC08288_compare.jpg) 博物館標本：高 ISO 降噪與立體感 | |
+[Get started](#get-started) · [What you can do](#what-you-can-do) · [Example prompts](#example-prompts) · [Results](#results) · [Compatibility](#platform-compatibility)
 
-清除路人（`pe.py erase`）：自動找出畫面裡的每個人並分成主角／路人，路人用 LaMa 補上背景。下圖清掉了廣場上的 4 位遊客，右下角站在深色門口前的那位刻意保留，因為他背後的結構太複雜，補出來會穿幫。
+</div>
 
-![bystander removal](docs/images/erase_DSC07991.jpg)
+photo-edit-skill gives your AI assistant a complete photo-editing workflow: select the strongest shots, correct light and color, develop a consistent look, and inspect the results before delivery.
 
-同一張照片套上多種風格（`pe.py board`）：
+Use it with **Codex, Claude Code, Gemini CLI**, or another assistant with file, terminal, and image access. The included processing engine runs locally, with grading recipes you can inspect and reuse.
 
-![style board](docs/images/style_board.jpg)
+![Hallstatt: original photograph on the left, edited photograph on the right](docs/images/DSC07991_compare.jpg)
 
-## 功能一覽
+*Original on the left, edited on the right. From a travel collection culled from 1,645 photos to 158 selections.*
 
-### 📥 讀取與取片
-- **JPG／HEIC／RAW 直接讀**：支援 Sony ARW、DNG、Canon CR3/CR2、Nikon NEF、Fuji RAF 等；RAW 亮度自動對齊相機內嵌 JPG，EXIF 照常讀取
-- **從 macOS「照片」圖庫取片**：依日期＋GPS 找出某次旅行的照片，分批匯出（SKILL.md 內有完整流程）
-- **iPhone 原檔遮罩**（`pe.py mattes`）：抽出 iPhone 自帶的皮膚／頭髮／牙齒／人物／天空遮罩，精度到髮絲
+## Get started
 
-### 🗂️ 選片與相簿整理
-- **選片**（`pe.py cull`）：連拍分組、否決模糊／過暗／過曝，組內挑最好的一張，人物照以**臉部**清晰度判斷
-- **相簿整理**（`pe.py organize`）：依活動（時間）＋內容（人像、風景、美食、夜景…）分類
-- **建議刪除**：閉眼、失焦、手震、太暗、過曝、誤拍、連拍重複；輸出可勾選的 HTML 報告，**絕不自動刪檔**
+### 1. Set up the local engine
 
-### 🎨 修圖與調色
-- **自動校正**（`pe.py analyze`）：曝光（中央加權或人臉測光）、白平衡、高光陰影、依 ISO 降噪
-- **12 種攝影師風格**（`pe.py board` 並排比較）：底片 Portra、電影感、暗調秋景、黑白、夜景城市、日系明亮…
-- **整批一致**（`develop --consistent`）：同場景照片共用白平衡與影調，曝光仍逐張，不會一張暖一張冷
-- **天空修復**（recipe `sky`）：壓亮部救雲層、漸層減光、陰天加淡藍；白牆／岩石不會被誤當天空
-- **局部遮罩**（recipe `masks`）：人物、天空、漸層、橢圓、亮度範圍、顏色範圍、iPhone 遮罩
-- **從參考照片學風格**（`pe.py match`）：給一張喜歡的作品，推出一組調色參數
+You need **Git, Python 3.9+, and uv**. Run the following in macOS or Linux terminals, or Windows PowerShell:
 
-### 👤 人像
-- **輕微美顏**：以 iPhone 皮膚遮罩讓臉維持相機原色，只做輕微磨皮（保留毛孔）、淡化黑眼圈、牙齒去黃、稍微瘦臉
-- **`vivid-iphone` 風格**：背景鮮豔、臉保持原樣，強度已依實際退件經驗調到「看不出修過」
-
-### 🌙 降噪
-- **連拍疊合降噪**（`pe.py stack`）：手持連拍自動對齊（特徵點＋ECC＋光流）後合併，移動的人車自動排除；3 張約降噪 45%
-- **單張 NLM 降噪**：夜景／高 ISO 用，比預設更強且保留邊緣
-
-### 🧹 清除路人
-- **人物偵測與編號**（`pe.py people`）：YOLOv8 分割每個人，自動猜主角／路人
-- **AI 補背景**（`pe.py erase`）：LaMa 補上路人位置，清完再偵測一次補清殘影
-- **用真實像素補**（`pe.py fill`）：有連拍時拿另一張的真實背景補，不靠 AI 生成；對不齊或貼到別人時會警告
-
-### 📤 輸出
-- **全解析度 JPG**＋每張的 `.recipe.json`（記錄所有參數，可重現）
-- **Lightroom 預設檔**（`pe.py xmp`）：風格或單張參數匯出成 `.xmp`，可匯入 Lightroom Classic／Camera Raw
-- **匯入照片 App**（`pe.py photos`）：每個資料夾一本相簿，分批匯入、可重跑不重複，開了 iCloud 照片就自動同步到手機
-- **前後對照**（`pe.py review`／`compare`／`contact`）：整批「原圖｜成品」總覽，Claude 逐張看過再交件
-
-引擎實作的 Lightroom 面板：白平衡、曝光、對比、亮部／陰影／白色／黑色、紋理、清晰度、去朦朧、細節飽和度／飽和度、點曲線（RGB 分色）、8 色 HSL、顏色分級（陰影／中間調／亮部／整體）、黑白混色、銳利化、降噪、暗角、顆粒、旋轉／拉直／裁切、局部遮罩。參數名稱和範圍都對應 Lightroom。
-
-## 內建風格
-
-| 風格 | 適合 |
-|---|---|
-| `clean-natural` | 任何照片；乾淨、真實、不像套濾鏡 |
-| `film-portra` | 人像、旅行、白天；暖色底片、柔和高光、好看的膚色 |
-| `moody-autumn` | 霧、陰天、秋天風景；暗調、橄欖綠、暖亮部 |
-| `cinematic-teal-orange` | 城市、街拍、黃昏；電影感青橙色調 |
-| `muted-chrome` | 街拍、建築、紀實；低飽和、硬朗陰影 |
-| `bright-airy` | 人像、咖啡廳、雪景；明亮、低對比、粉嫩 |
-| `bw-fineart` | 建築、戲劇性天空；高反差黑白 |
-| `night-city` | 夜景、室內、高 ISO；深藍陰影＋暖色燈光 |
-| `nordic-matte` | 極簡、雪、海岸；冷調霧面 |
-| `golden-hour` | 日落、人像；暖金色光暈 |
-| `film-portra-clear` | 晴天旅行；Portra 色調但保留藍天 |
-| `vivid-iphone` | iPhone 照片；鮮豔背景＋臉維持原色的輕微美顏（搭配 `--no-auto`） |
-
-風格就是 `styles/*.json`，可以自己加；`pe.py xmp <風格>` 可以帶進 Lightroom 用。
-
-## 安裝
-
-```bash
+```sh
 git clone https://github.com/yankesswang/photo-edit-skill.git
-ln -sfn "$PWD/photo-edit-skill" ~/.claude/skills/photo-edit
+cd photo-edit-skill
+uv run scripts/pe.py doctor
 ```
 
-依賴：Python 3.9+、numpy、opencv-python-headless、pillow。RAW 需要 `rawpy`、HEIC 直讀需要 `pillow-heif`（`pip install rawpy pillow-heif`；沒裝 pillow-heif 會自動用 macOS 的 `sips` 轉）。
-沒裝的話用 `uv run scripts/pe.py ...`，依賴寫在 PEP 723 header，會自動安裝。
+`uv` installs the core dependencies automatically. `doctor` reports the platform, paths, and available optional packages without downloading models. Optional features have [additional dependencies](#optional-dependencies); package compatibility may require a newer Python version.
 
-清除路人另外需要 `torch` 和 `ultralytics`（`pip install torch ultralytics`）；兩個模型（YOLOv8s-seg 24MB、LaMa 196MB）第一次使用時自動從官方 GitHub release 下載到 `~/.cache/photo-edit/models/`。
+### 2. Choose how to work
 
-相簿整理（`pe.py organize`：分類＋建議刪除閉眼／失焦／模糊／重複）另外需要 `mediapipe`、`torch`、`transformers`（`pip install mediapipe torch transformers`）；臉部模型（MediaPipe，約 4MB）第一次使用時下載，CLIP（`openai/clip-vit-base-patch32`，約 600MB）走 HuggingFace 快取。
+**With an AI assistant**
 
-## 使用
+Open this repository in your assistant's workspace, then ask:
 
-在 Claude Code 裡直接說：
-
-> 幫我把 /Volumes/NO NAME/DCIM/103MSDCF 的照片選片並修成攝影師風格
-
-Claude 會依 [SKILL.md](SKILL.md) 的流程：選片 → 分析 → 做風格板讓你挑 → 預覽並逐張檢查 → 個別修正 → 全解析度輸出。原檔不會被修改。
-
-也可以直接用 CLI：
-
-```bash
-python3 scripts/pe.py styles                                   # 列出風格
-python3 scripts/pe.py cull /path/to/DCIM -o out/cull            # 選片
-python3 scripts/pe.py board photo.jpg -o board.jpg              # 風格板
-python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --preview 1200 -o out/preview
-python3 scripts/pe.py review /path/to/DCIM out/preview          # 前後對照
-python3 scripts/pe.py develop @out/cull/picks.txt --style film-portra --per-file fixes.json -o out/final
-python3 scripts/pe.py develop DIR --style film-portra --consistent                     # 同場景共用白平衡／影調
-python3 scripts/pe.py develop DSC0001.ARW --style clean-natural                        # RAW 直接修
-python3 scripts/pe.py develop IMG.jpg --style clean-natural --adjust '{"sky": {"blue": 40}}'   # 陰天天空
-python3 scripts/pe.py stack burst1.jpg burst2.jpg burst3.jpg -o out/merged.jpg         # 夜景連拍疊合降噪
-python3 scripts/pe.py masks photo.jpg --mask subject --mask sky # 遮罩疊圖
-python3 scripts/pe.py people photo.jpg -o people.jpg            # 人物編號疊圖（綠＝主角、紅＝路人）
-python3 scripts/pe.py erase photo.jpg --keep 0 -o out/erased     # 只留 0 號，其他人清掉
-python3 scripts/pe.py fill photo.jpg --source burst2.jpg --keep 0 -o out/erased   # 用另一張連拍的真實背景補
-python3 scripts/pe.py match photo.jpg --ref ref1.jpg ref2.jpg -o my-look.json
-python3 scripts/pe.py xmp film-portra                           # Lightroom 預設檔
+```text
+Read SKILL.md and use the photo-edit workflow on my photos folder.
+Cull the strongest shots, show me a style board, and let me choose a look.
+Review the before-and-after previews, refine the edits, and export
+full-resolution JPEGs with recipe files. Keep the originals unchanged.
 ```
 
-個別微調檔（`--per-file`）的 key 是檔名：
+Replace `photos` with your actual folder. The assistant follows [SKILL.md](SKILL.md) and adapts the commands to its tools and operating system.
+
+**From the command line**
+
+```sh
+uv run scripts/pe.py board "photo.jpg" -o out/board.jpg
+uv run scripts/pe.py develop "photo.jpg" --style film-portra -o out/final
+uv run scripts/pe.py compare "photo.jpg" "out/final/photo_film-portra.jpg" -o out/compare.jpg
+```
+
+Open the style board before choosing a look, then inspect the comparison. Replace `photo.jpg` with your own image and update the output filename in the comparison command accordingly.
+
+| Output | What you get |
+| --- | --- |
+| `out/board.jpg` | The original image alongside candidate styles |
+| `out/final/photo_film-portra.jpg` | The full-resolution edit |
+| `out/final/photo_film-portra.recipe.json` | Source information and applied settings |
+| `out/compare.jpg` | A before-and-after comparison |
+
+Keep edited files in a separate output directory. Source images are preserved.
+
+## What you can do
+
+| Workflow | Use it when you want to... | Output |
+| --- | --- | --- |
+| **Cull a shoot** | Find the strongest frames, compare bursts, and flag blur or poor exposure | Ranked selections, contact sheets, and an input list for editing |
+| **Develop a collection** | Correct exposure and white balance, then apply a consistent look | Full-resolution JPEGs and per-image recipes |
+| **Find your look** | Compare 12 built-in styles or derive settings from a reference image | A style board or a custom JSON recipe |
+| **Refine specific areas** | Lift a subject, control a bright sky, or adjust a color range | Local adjustments with mask previews |
+| **Retouch portraits** | Make subtle skin, under-eye, teeth, and face-shape adjustments | Retouched images; optional iPhone matte support |
+| **Clean up night shots** | Reduce noise in a single image or merge a closely aligned burst | A denoised image ready for grading |
+| **Remove bystanders** | Remove distractions using another frame or generated background fill | Edited images with alignment and fill-quality warnings |
+| **Organize an album** | Group photos by event and content, then review potential rejects | An HTML report, review lists, and optional categorized folders |
+| **Take a look into Lightroom** | Reuse global grading settings in Lightroom Classic or Camera Raw | An XMP preset |
+
+Some workflows require optional packages or platform-specific tools. See [compatibility](#platform-compatibility) and [limitations](#limitations).
+
+## Example prompts
+
+After loading `SKILL.md`, describe the outcome you want:
+
+**Travel collection**
+
+```text
+Cull my travel photos in photos/trip. Show me the strongest shots and
+compare a few film-inspired looks. Keep the daylight photos consistent,
+and use a separate look for night scenes.
+```
+
+**Reference-based grading**
+
+```text
+Use reference.jpg as the color direction for this set. Preserve natural
+skin tones and show me before-and-after previews before the final export.
+```
+
+**Portraits**
+
+```text
+Give these portraits a clean, natural finish. Keep facial features intact,
+use subtle retouching, and show me close-up comparisons of the faces.
+```
+
+**Album organization**
+
+```text
+Group this folder by event and subject. Flag blurred frames, closed eyes,
+and near-duplicates for review. Give me an HTML report without deleting files.
+```
+
+**Bystander removal**
+
+```text
+Identify the people in this photo and show me their numbered overlays.
+Keep the main subject. Check the adjacent burst frames for real background
+pixels before using inpainting, then inspect the edited areas at full size.
+```
+
+## Results
+
+The examples below come from one trip, photographed as unprocessed Sony a5100 JPEGs. The workflow selected 158 images from 1,645, using `film-portra` for daylight scenes and `night-city` for night scenes, followed by individual adjustments. Originals appear on the left; edits appear on the right.
+
+<details>
+<summary>View before-and-after examples</summary>
+
+| Scene | Scene |
+| --- | --- |
+| ![Foggy lake before and after editing](docs/images/DSC07766_compare.jpg) **Foggy lake:** stronger tonal separation while keeping the overcast sky neutral. | ![Autumn foliage before and after editing](docs/images/DSC07663_compare.jpg) **Autumn foliage:** film-inspired color with atmospheric haze preserved. |
+| ![Heroes' Square before and after editing](docs/images/DSC07277_compare.jpg) **Heroes' Square:** daylight grading with a blue sky. | ![Sunset silhouette before and after editing](docs/images/DSC07550_compare.jpg) **Sunset silhouette:** more sky definition while retaining a dark foreground. |
+| ![Prater at night before and after editing](docs/images/DSC08496_compare.jpg) **Prater at night:** deep blue shadows and warm lights. | ![Museum interior before and after editing](docs/images/DSC08306_compare.jpg) **Museum interior:** noise reduction and highlight control in low light. |
+| ![Museum specimen before and after editing](docs/images/DSC08288_compare.jpg) **Museum specimen:** high-ISO noise reduction and improved definition. | |
+
+</details>
+
+<details>
+<summary>View bystander removal and a style comparison board</summary>
+
+Bystander removal uses person segmentation and LaMa inpainting. In this example, four visitors were removed. A person in front of the dark doorway was retained because the background structure could not be reconstructed convincingly.
+
+![Bystander removal comparison](docs/images/erase_DSC07991.jpg)
+
+A style board renders multiple looks from the same source image:
+
+![One photograph rendered with multiple built-in styles](docs/images/style_board.jpg)
+
+</details>
+
+## How it works
+
+```text
+Photo folder / memory card
+          │
+          ▼
+     Cull and analyze
+          │
+          ▼
+  Compare styles and choose a look
+          │
+          ▼
+     Render previews
+          │
+          ▼
+  Review images → Refine settings
+          │
+          ▼
+  Full-resolution JPEGs + recipes + optional XMP
+```
+
+The Python, NumPy, and OpenCV engine handles image processing. The assistant interprets the scene, evaluates the output, and decides what to adjust.
+
+1. **Correct before styling.** Apply per-image exposure, white balance, tone, and noise corrections before adding a shared look.
+2. **Review the actual output.** Inspect comparisons, masks, and detail crops for unnatural skin, gray whites, halos, and artifacts.
+3. **Make each revision intentional.** Record the problem, intended improvement, and tradeoff; keep revision rounds bounded and deliver the best reviewed version.
+4. **Keep the collection coherent.** Share a look across related scenes and make individual corrections where needed.
+5. **Preserve sources and settings.** Keep originals intact and record each edit in a JSON recipe. Album reports recommend deletions without deleting files.
+
+Personal preferences can be recorded in `~/.config/photo-edit/taste.md` and consulted at the start of a session. Detailed review criteria and editing procedures live in [SKILL.md](SKILL.md).
+
+## Working with AI assistants
+
+| Setup | How to use it |
+| --- | --- |
+| **Codex, Claude Code, Gemini CLI, or another local agent** | Open the repository in an accessible workspace and ask the agent to read `SKILL.md`. |
+| **A host with skill installation** | Install the entire project folder using the host's mechanism. Keep `scripts/`, `styles/`, and `references/` alongside `SKILL.md`. |
+| **A chat interface without local tools** | Run the CLI yourself and share style boards or comparisons for feedback. |
+| **CLI only** | Choose styles, run commands, and review images yourself. |
+
+Full agent operation requires **local file access, command execution, and image viewing**. Host-specific discovery varies; these integrations use the shared workflow and CLI rather than dedicated provider adapters. An assistant that cannot view the output cannot complete visual review.
+
+Use actual mounted paths, such as `"E:/DCIM"` on Windows, `"/media/user/SD/DCIM"` on Linux, or `"/Volumes/SD/DCIM"` on macOS. The [runtime guide](references/runtime-guide.md) covers shell differences, dependencies, and fallback workflows.
+
+Processing runs locally. Any image transfer to a remote model depends on your assistant's host and model settings.
+
+## Platform compatibility
+
+The core CLI uses portable Python libraries. **Core workflows have been tested on Linux. Windows and macOS have not yet been validated on physical machines for the current changes.** Platform guards have automated coverage; optional formats and models require validation in the target environment.
+
+| Capability | Windows | Linux | macOS | Requirements |
+| --- | --- | --- | --- | --- |
+| JPEG editing, culling, style boards, comparisons, XMP export | Shared CLI | Shared CLI | Shared CLI | Core dependencies |
+| RAW decoding | Optional | Optional | Optional | `rawpy`; camera support depends on the decoder |
+| HEIC / HEIF decoding | `pillow-heif` | `pillow-heif` | `pillow-heif` or system `sips` | Decoding does not extract iPhone mattes |
+| Album classification, portrait retouching, bystander removal | Optional | Optional | Optional | Compatible packages and models; see below |
+| Existing iPhone matte sidecars | Shared workflow | Shared workflow | Shared workflow | Matching `<image-stem>.mattes/` directory beside the image |
+| Extracting iPhone mattes | Unavailable | Unavailable | Available | Apple ImageIO, `swiftc`, and an original containing the auxiliary images |
+| Apple Photos access and import | Unavailable | Unavailable | Available | Photos, AppleScript, and system permissions |
+
+On Windows and Linux, use a local photo directory instead of Apple Photos. iPhone mattes can be extracted on a Mac and copied with the matching images, or replaced with the engine's general-purpose masks.
+
+### Optional dependencies
+
+Add optional packages to the **same `uv run` invocation** that performs the operation. A package installed with a global `pip` command may not be visible in uv's isolated script environment.
+
+| Capability | Invocation |
+| --- | --- |
+| RAW decoding | `uv run --with rawpy scripts/pe.py develop "photo.ARW" --style clean-natural -o out/raw` |
+| HEIC decoding | `uv run --with pillow-heif scripts/pe.py develop "photo.HEIC" --style clean-natural -o out/heic` |
+| Person detection | `uv run --with torch --with ultralytics scripts/pe.py people "photo.jpg" -o out/people.jpg` |
+| Album organization | `uv run --with mediapipe --with torch --with transformers scripts/pe.py organize "photos" -o out/album` |
+| Portrait retouching | `uv run --with mediapipe scripts/pe.py develop "photo.jpg" --style vivid-iphone --no-auto -o out/portrait` |
+
+Combine `--with` options when an operation needs several capabilities. For example, person detection on a HEIC image also requires `--with pillow-heif`. Alternatively, install the dependencies in your own virtual environment and invoke `scripts/pe.py` with that environment's Python.
+
+Person removal downloads approximately 220 MB of YOLOv8 and LaMa models on first use. Album organization additionally uses MediaPipe models and approximately 600 MB of CLIP weights. Download sizes depend on model versions and existing caches.
+
+## CLI reference
+
+Run commands from the repository root. In the examples below, `photos` is the input directory.
+
+### Batch editing
+
+```sh
+uv run scripts/pe.py cull "photos" -o out/cull
+uv run scripts/pe.py develop "@out/cull/picks.txt" --style film-portra --preview 1200 -o out/preview
+uv run scripts/pe.py review "photos" out/preview
+uv run scripts/pe.py develop "@out/cull/picks.txt" --style film-portra -o out/final
+```
+
+Review the culling sheets and previews before running the final command. Quote `@` file-list arguments for PowerShell compatibility. Add `--consistent` to `develop` to share white-balance and tone corrections within scene groups while retaining per-image exposure adjustments.
+
+### Per-image adjustments
+
+Create a UTF-8 `fixes.json`. Keys can be full filenames or filenames without extensions:
 
 ```json
 {
-  "DSC07550": {"shadows": -55, "blacks": -20},
-  "DSC07047": {"rotate": 90},
-  "DSC07480": {"masks": [{"name": "face", "mask": {"type": "subject", "subtract": [{"type": "sky"}]},
-                          "adjust": {"exposure": 0.8, "shadows": 20}}]}
+  "DSC07550.JPG": {"shadows": -55, "blacks": -20},
+  "DSC07047": {"rotate": 90}
 }
 ```
 
-## 設計重點
+```sh
+uv run scripts/pe.py develop "@out/cull/picks.txt" --style film-portra --per-file fixes.json -o out/final
+```
 
-- **先校正、後風格**：每張照片先做自動校正（曝光、白平衡、高光陰影、降噪），再疊上整批共用的風格。這是攝影師的順序，也讓同一批照片看起來像同一個人修的。
-- **Claude 要親眼看**：腳本負責算，判斷交給 Claude。SKILL.md 規定動手前先寫視覺簡報、每次修改寫明「問題 → 預期改善 → 代價」、回合上限、交出最好的版本而不是最後一個，並附上失敗訊號清單（橘色塑膠皮膚、灰掉的白色、遮罩光暈…）。
-- **個人審美檔**：`~/.config/photo-edit/taste.md` 累積你的偏好，每次開工先讀。
-- **8GB 筆電可跑**：24MP 一張約 15 秒；選片 1600 張約 6 分鐘（有快取）。
+UTF-8 input with a byte-order mark is also accepted. In PowerShell, use `Set-Content -Encoding utf8` when writing configuration files. Passing a JSON file avoids differences in shell quoting.
 
-## 限制
+### Additional operations
 
-- 這是 Lightroom 演算法的近似，不是 Adobe 的引擎；同一組數字在 Lightroom 裡會接近，但不會像素級一致。
-- JPG 輸入高光救回空間小；有 RAW 就用 RAW。RAW 解碼沒有鏡頭變形／暗角校正。
-- 連拍疊合只適合站位不動的連拍；人或相機在動的一系列照片合不起來（會退回單張，不會壞）。
-- 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影偵測不到時要手動指定框。
-- 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，靠 Claude 看圖判斷。
-- `.xmp` 匯出不含局部遮罩和清除路人。
-- 清除路人是在**生成**原本不存在的背景：小路人在石板路、牆面、天空前效果很好；人比較大、背後是門口／招牌／人群時會留下抹痕或殘影，這時應該保留那個人。紀實或證件用途的照片不要用。
+```sh
+# Merge a burst for noise reduction.
+uv run scripts/pe.py stack "burst1.jpg" "burst2.jpg" "burst3.jpg" -o out/merged.jpg
 
-## 參考
+# Inspect subject and sky masks.
+uv run scripts/pe.py masks "photo.jpg" --mask subject --mask sky -o out/masks.jpg
 
-設計上參考了這些開源專案的方法（沒有複製程式碼）：
-[lightroom-style](https://github.com/Wyyyyuu/lightroom-style)（分亮度區色彩量測、回合紀律）、
-[raw-photo-agent](https://github.com/Timverhoogt/raw-photo-agent)（候選版本與獨立評審）、
-[photo-skills](https://github.com/konanok/photo-skills)（選片與一致性模式）、
-[chemigram](https://github.com/chipi/chemigram)（意圖 → 動作詞彙、taste 檔）、
-[muse-skills](https://github.com/GuohongLi/muse-skills)（選片評分維度、畫質標準）、
-[computer-use-photo-editing-skills](https://github.com/eamonboyle/computer-use-photo-editing-skills)（調色失敗訊號、構圖決策）、
-[photo-retouch-pro](https://github.com/qzfcoder/photo-retouch-pro)（強度分級）。
+# Remove people after inspecting their IDs with the people command.
+uv run --with torch --with ultralytics scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased
 
-範例照片為作者本人拍攝。
+# Fill from another frame, with LaMa fallback for uncovered regions.
+uv run --with torch --with ultralytics scripts/pe.py fill "photo.jpg" --source "burst2.jpg" --keep 0 -o out/filled.jpg
+
+# Derive a look from a reference image.
+uv run scripts/pe.py match "photo.jpg" --ref "reference.jpg" -o out/my-look.json
+
+# Export a global preset for Lightroom or Camera Raw.
+uv run scripts/pe.py xmp film-portra -o out/film-portra.xmp
+```
+
+Use `uv run scripts/pe.py <command> --help` for command options. Inspect the numbered `people` overlay before specifying which people to retain or remove.
+
+## Built-in styles
+
+| Style | Intended use |
+| --- | --- |
+| `clean-natural` | General-purpose correction with restrained color and contrast |
+| `film-portra` | Daylight travel and portraits; warm color and soft highlights |
+| `moody-autumn` | Fog, overcast landscapes, and autumn foliage; muted greens and warm highlights |
+| `cinematic-teal-orange` | Urban scenes, street photography, and dusk; teal-and-orange grading |
+| `muted-chrome` | Architecture and documentary photography; low saturation and defined shadows |
+| `bright-airy` | Portraits, cafes, and snow; bright tones and low contrast |
+| `bw-fineart` | Architecture and dramatic skies; high-contrast black and white |
+| `night-city` | Night scenes, interiors, and high-ISO images; cool shadows and warm lights |
+| `nordic-matte` | Minimal landscapes, snow, and coastlines; cool matte tones |
+| `golden-hour` | Sunset scenes and portraits; warm golden tones |
+| `film-portra-clear` | Daylight travel; Portra-inspired color with blue skies retained |
+| `vivid-iphone` | iPhone portraits; vivid backgrounds and subtle retouching; use `--no-auto` |
+
+Styles are JSON files in `styles/`. Add your own using the recipe format in the [editing guide](references/editing-guide.md). Global settings can be exported with `pe.py xmp <style>`.
+
+## Limitations
+
+- **Lightroom compatibility:** Controls approximate Lightroom behavior. Identical parameter values do not produce pixel-identical Adobe renders. XMP export includes global adjustments, not local masks or object removal.
+- **Input latitude:** JPEGs have limited highlight recovery. RAW decoding offers more latitude but does not apply lens-distortion or lens-vignetting corrections.
+- **Masks:** General-purpose subject masks use face anchors, ellipses, and edge refinement rather than semantic person segmentation. Profiles, rear views, and small subjects may need manual boxes. The optional bystander-removal pipeline uses separate YOLOv8 segmentation.
+- **Burst merging:** Frames must have closely matching viewpoints. Moving regions fall back to the reference frame; substantial camera or subject movement can eliminate most of the denoising benefit.
+- **Culling:** Technical scores compare similar frames. Expressions, timing, and photographic value require visual judgment.
+- **Inpainting:** LaMa generates replacement content. Large subjects and complex structures can produce artifacts. `fill` prefers real pixels from another frame but can also fall back to LaMa. Review results at 100% magnification; avoid generated removal for documentary or identification images.
+- **Performance:** Historical author measurements were approximately 15 seconds per 24 MP image and six minutes to cull 1,600 images with caching. Hardware and version details were not recorded, so these are not portable benchmarks.
+
+## Troubleshooting
+
+| Problem | Suggested action |
+| --- | --- |
+| Missing optional package | Include the required `--with` options and run `doctor` with those same options. |
+| HEIC fails on Windows or Linux | Add `--with pillow-heif`, or convert the image to JPEG first. `sips` is macOS-only. |
+| Windows cannot create organization symlinks | Use `organize ... --apply copy`, or keep the default report-only mode. Copying uses additional disk space. |
+| Assistant cannot open images | Inspect comparisons yourself or use an assistant with image access. The CLI does not perform model-based visual review. |
+| Insufficient memory | Start with `--preview 1200`, set `develop -j 1`, and export in smaller batches. |
+
+## Documentation
+
+| Resource | Contents |
+| --- | --- |
+| [SKILL.md](SKILL.md) | Agent workflow, visual review criteria, and editing procedures |
+| [Runtime guide](references/runtime-guide.md) | Platform adaptation, dependencies, tools, and fallback workflows |
+| [Editing guide](references/editing-guide.md) | Recipe fields and custom-style authoring |
+| [Portability tests](tests/test_portability.py) | Platform guards, text encoding, and a core CLI workflow test |
+
+The detailed workflow and reference guides are currently written primarily in Traditional Chinese.
+
+To run the automated checks:
+
+```sh
+uv run --with numpy --with "opencv-python-headless>=4.8,<5" --with pillow python tests/test_portability.py
+```
+
+## Acknowledgements
+
+The workflow draws on ideas from these projects: [lightroom-style](https://github.com/Wyyyyuu/lightroom-style) for tonal-region color analysis and iteration discipline; [raw-photo-agent](https://github.com/Timverhoogt/raw-photo-agent) for candidate selection and independent review; [photo-skills](https://github.com/konanok/photo-skills) for culling and consistency; [chemigram](https://github.com/chipi/chemigram) for intent-to-adjustment vocabulary and preference files; [muse-skills](https://github.com/GuohongLi/muse-skills) for culling criteria; [computer-use-photo-editing-skills](https://github.com/eamonboyle/computer-use-photo-editing-skills) for grading checks and composition decisions; and [photo-retouch-pro](https://github.com/qzfcoder/photo-retouch-pro) for retouching intensity levels.
+
+These are methodological references; their source code was not copied. All example photographs were taken by the project author.

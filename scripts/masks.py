@@ -52,7 +52,7 @@ def _matte(name, h, w):
         return np.zeros((h, w), np.float32)
     m = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
     try:
-        o = json.loads((Path(d) / "meta.json").read_text()).get("orientation", 1)
+        o = json.loads((Path(d) / "meta.json").read_text(encoding="utf-8-sig")).get("orientation", 1)
     except (OSError, ValueError):
         o = 1
     for rot in _ORIENT.get(o, []):

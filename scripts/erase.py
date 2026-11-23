@@ -1,6 +1,6 @@
 """Remove bystanders: person instance segmentation (YOLOv8-seg) + LaMa inpainting.
 
-Two-step, so Claude (or the user) decides who stays:
+Two-step, so the AI assistant (or the user) decides who stays:
   1. people(img)  -> numbered list of every detected person (area, box, face, role guess)
   2. erase(img, ids) -> those people masked (dilated) and filled by LaMa, region by region
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import math
+import sys
 from pathlib import Path
 
 import cv2
@@ -142,6 +143,10 @@ def load_image(path, max_side=None):
     if is_raw(path):
         return _load_raw(path, max_side)
     if str(path).lower().endswith(tuple(HEIF_EXT)) and "pillow_heif" not in globals():
+        if sys.platform != "darwin":
+            raise RuntimeError("HEIC/HEIF requires pillow-heif on Windows/Linux. "
+                               "Run: uv run --with pillow-heif scripts/pe.py <command> ... "
+                               "or convert the image to JPG first.")
         return _load_heif_sips(path, max_side)
     im = Image.open(path)
     if max_side:

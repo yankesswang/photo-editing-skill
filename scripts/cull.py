@@ -5,11 +5,11 @@ Pipeline (no ML models, runs on a laptop):
   2. group   — consecutive frames that are close in time AND look alike = one burst/scene group
   3. veto    — hard technical rejects: blurry, hopelessly dark, blown out
   4. rank    — technical score inside each group (sharpness + exposure); keep top candidates
-  5. sheets  — contact sheets per group so Claude can judge the *moment* (expression, gesture,
+  5. sheets  — contact sheets per group so the AI assistant can judge the *moment* (expression, gesture,
                composition) visually and override the technical pick
 
 The technical score only decides among near-identical frames. Choosing *which moments* are worth
-keeping is Claude's visual judgement (see SKILL.md, step "選片").
+keeping is the AI assistant's visual judgement (see SKILL.md, step "選片").
 """
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def scan(files, out_dir, jobs=4, cache=True):
     cache_p = out_dir / "scan.json"
     known = {}
     if cache and cache_p.exists():
-        known = {r["file"]: r for r in json.loads(cache_p.read_text())
+        known = {r["file"]: r for r in json.loads(cache_p.read_text(encoding="utf-8-sig"))
                  if "error" not in r and r.get("v") == SCAN_VERSION}
     todo = [str(f) for f in files if str(f) not in known]
     if todo:
@@ -118,7 +118,7 @@ def scan(files, out_dir, jobs=4, cache=True):
                 if (i + 1) % 100 == 0:
                     print(f"  scanned {i + 1}/{len(todo)}", flush=True)
     rows = [known[str(f)] for f in files if str(f) in known]
-    cache_p.write_text(json.dumps(list(known.values())))
+    cache_p.write_text(json.dumps(list(known.values())), encoding="utf-8")
     return rows
 
 

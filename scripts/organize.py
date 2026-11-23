@@ -250,7 +250,7 @@ def scan_faces(files, out_dir, jobs=3):
     cache_p = out_dir / "faces.json"
     known = {}
     if cache_p.exists():
-        known = {r["file"]: r for r in json.loads(cache_p.read_text()) if r.get("v") == FACE_V and "error" not in r}
+        known = {r["file"]: r for r in json.loads(cache_p.read_text(encoding="utf-8-sig")) if r.get("v") == FACE_V and "error" not in r}
     todo = [str(f) for f in files if str(f) not in known]
     if todo:
         with ProcessPoolExecutor(jobs) as ex:
@@ -258,8 +258,8 @@ def scan_faces(files, out_dir, jobs=3):
                 known[r["file"]] = r
                 if (i + 1) % 100 == 0:
                     print(f"  faces {i + 1}/{len(todo)}", flush=True)
-                    cache_p.write_text(json.dumps(list(known.values())))
-        cache_p.write_text(json.dumps(list(known.values())))
+                    cache_p.write_text(json.dumps(list(known.values())), encoding="utf-8")
+        cache_p.write_text(json.dumps(list(known.values())), encoding="utf-8")
     return {str(f): known.get(str(f), {}) for f in files}
 
 
@@ -267,7 +267,7 @@ def scan_faces(files, out_dir, jobs=3):
 def load_categories(path=None):
     if not path:
         return CATEGORIES
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     return [(c["key"], c.get("label", c["key"]), c["prompts"]) for c in data]
 
 
@@ -277,7 +277,7 @@ def classify(rows, out_dir, categories=CATEGORIES, batch=32):
     cache_p = Path(out_dir) / "clip.json"
     cache = {}
     if cache_p.exists():
-        c = json.loads(cache_p.read_text())
+        c = json.loads(cache_p.read_text(encoding="utf-8-sig"))
         if c.get("sig") == sig:
             cache = c["probs"]
     todo = [r for r in rows if r["file"] not in cache and r.get("thumb")]
@@ -313,7 +313,7 @@ def classify(rows, out_dir, categories=CATEGORIES, batch=32):
                     cache[r["file"]] = {categories[k][0]: round(float(v), 4) for k, v in enumerate(row)}
                 if (i // batch) % 10 == 9:
                     print(f"  CLIP {i + len(chunk)}/{len(todo)}", flush=True)
-        cache_p.write_text(json.dumps({"sig": sig, "probs": cache}))
+        cache_p.write_text(json.dumps({"sig": sig, "probs": cache}), encoding="utf-8")
     return cache
 
 
@@ -471,7 +471,7 @@ def write_html(items, summary, dst, reason_zh=REASON_ZH):
                      "c": it["category_zh"], "e": it["event"]})
     html = _HTML.replace("__DATA__", json.dumps(data, ensure_ascii=False)) \
                 .replace("__SUMMARY__", json.dumps(summary, ensure_ascii=False))
-    dst.write_text(html)
+    dst.write_text(html, encoding="utf-8")
     return dst
 
 
@@ -523,7 +523,7 @@ function render(){
   const M=document.getElementById('main');M.innerHTML='';
   if(cur==='del'){
     const bar=document.createElement('div');bar.className='bar';
-    bar.innerHTML='<span id=cnt></span><button class=act id=exp>匯出勾選清單 (.txt)</button><span class=stats>取消勾選＝要留下。原檔不會被動到，清單交給 Claude 或自己在 Finder／相簿刪除。</span>';
+    bar.innerHTML='<span id=cnt></span><button class=act id=exp>匯出勾選清單 (.txt)</button><span class=stats>取消勾選＝要留下。原檔不會被動到，清單交給 AI 助理 或自己在 檔案管理員／相簿刪除。</span>';
     M.appendChild(bar);
     bar.querySelector('#exp').onclick=()=>{const t=D.filter(d=>d.v==='delete'&&!keep.has(d.f)).map(d=>d.f).join('\n')+'\n';const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));a.download='delete_confirmed.txt';a.click()};
     const by={};D.filter(d=>d.v==='delete').forEach(d=>{(by[d.r[0]]=by[d.r[0]]||[]).push(d)});
