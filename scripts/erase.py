@@ -1,8 +1,11 @@
-"""Remove bystanders: person instance segmentation (YOLOv8-seg) + LaMa inpainting.
+"""Remove bystanders: person instance segmentation (YOLOv8-seg) + effect-aware inpainting.
 
 Two-step, so the AI assistant (or the user) decides who stays:
   1. people(img)  -> numbered list of every detected person (area, box, face, role guess)
-  2. erase(img, ids) -> those people masked (dilated) and filled by LaMa, region by region
+  2. erase(img, ids) -> those people (and their shadows/reflections) removed, region by region
+
+Fill backends (see removers.py): osor (default on CUDA, removes shadows too), objectclear
+(non-commercial licence), lama (fast fallback, used on Mac/CPU).
 
 Fidelity rules (see SKILL.md): this *invents* background where people stood. Only remove
 people who are not the subject; never touch the subject; check every result at 100%;
@@ -44,6 +47,8 @@ def model_path(name):
 
 def _device():
     import torch
+    if torch.cuda.is_available():
+        return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -241,20 +246,39 @@ def box_mask(shape, boxes, feather=0.15):
     return m
 
 
-def erase(img, spec="bystanders", grow=0.10, ps=None, extra=None, second_pass=True):
+def fill(img, mask, backend="lama", protect=None):
+    """Fill `mask` with the chosen backend ('lama' | 'osor' | 'objectclear', already resolved)."""
+    if backend == "lama":
+        return inpaint(img, mask)
+    import removers
+    return removers.remove(img, mask, backend, protect)
+
+
+def erase(img, spec="bystanders", grow=0.10, ps=None, extra=None, second_pass=True, backend="auto"):
     """Remove the selected people (+ `extra` boxes). A second detection pass on the result
-    catches half-erased ghosts and people missed the first time inside the touched area."""
+    catches half-erased ghosts and people missed the first time inside the touched area.
+    backend: 'auto' (osor on CUDA, else lama) | 'osor' | 'objectclear' | 'lama'."""
+    import removers
+    backend = removers.resolve(backend)
     ps = ps if ps is not None else people(img)
     chosen = select(ps, spec)
     if not chosen and not extra:
         return img, ps, []
-    m = np.maximum(person_mask(img.shape, chosen, grow), box_mask(img.shape, extra))
-    out = inpaint(img, m)
+    chosen_ids = {p["id"] for p in chosen}
+    # protect kept subjects from the soft paste edge, but where a kept polygon overlaps a removed
+    # person (YOLO polygons often wrap a neighbour) the explicit removal wins
+    subj = person_mask(img.shape, [p for p in ps if p["id"] not in chosen_ids], 0.0)
+    subj[person_mask(img.shape, chosen, 0.0) > 0] = 0
+    k = max(3, int(0.006 * max(img.shape[:2]))) | 1  # drop slivers left by the subtraction
+    subj = cv2.morphologyEx(subj, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    # diffusion backends get a near-tight mask: they find the shadow / reflection themselves and
+    # report it, and a fat dilated mask only gives them less real context to copy from
+    g = grow if backend == "lama" else min(grow, 0.03)
+    m = np.maximum(person_mask(img.shape, chosen, g), box_mask(img.shape, extra))
+    out = fill(img, m, backend, protect=subj)
     if second_pass and chosen:
         h, w = m.shape
         near = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(3, w // 60),) * 2))
-        keep_ids = {p["id"] for p in ps if p not in chosen}
-        subj = person_mask(img.shape, [p for p in ps if p["id"] in keep_ids], 0.0)
         left = []
         for q in people(out):
             one = np.zeros((h, w), np.uint8)
@@ -264,8 +288,8 @@ def erase(img, spec="bystanders", grow=0.10, ps=None, extra=None, second_pass=Tr
             if overlap_touched > 0.3 and overlap_subject < 0.2:
                 left.append(q)
         if left:
-            m2 = person_mask(img.shape, left, grow * 1.5)
-            out = inpaint(out, m2)
+            m2 = person_mask(img.shape, left, g * 1.5)
+            out = fill(out, m2, backend, protect=subj)
     return out, ps, [p["id"] for p in chosen]
 
 

@@ -155,7 +155,7 @@ def cmd_doctor(a):
     import shutil
 
     packages = {name: importlib.util.find_spec(name) is not None for name in
-                ("rawpy", "pillow_heif", "torch", "ultralytics", "mediapipe", "transformers")}
+                ("rawpy", "pillow_heif", "torch", "ultralytics", "mediapipe", "transformers", "diffusers", "peft")}
     mac = sys.platform == "darwin"
     print(json.dumps({
         "platform": platform.system(), "python": platform.python_version(),
@@ -168,6 +168,7 @@ def cmd_doctor(a):
             "extract_iphone_mattes": mac and bool(shutil.which("swiftc")),
             "apple_photos": mac and bool(shutil.which("osascript")),
             "people_erase_fill": packages["torch"] and packages["ultralytics"],
+            "erase_effect_aware": packages["torch"] and packages["ultralytics"] and packages["diffusers"] and packages["peft"],
             "organize": all(packages[n] for n in ("mediapipe", "torch", "transformers")),
             "portrait": packages["mediapipe"],
         },
@@ -632,6 +633,10 @@ def cmd_people(a):
 def cmd_erase(a):
     """Write copies with people removed (originals untouched); EXIF kept. Then develop those copies."""
     import erase as R
+    import removers
+    backend = removers.resolve(a.backend)
+    if backend == "objectclear":
+        print("note: ObjectClear weights are S-Lab License 1.0 (non-commercial use only)")
     files = expand(a.images)
     outdir = Path(a.out or (DEFAULT_OUT / (files[0].parent.name + "_erased")))
     outdir.mkdir(parents=True, exist_ok=True)
@@ -645,10 +650,10 @@ def cmd_erase(a):
         t = time.time()
         img = E.load_image(str(f), a.preview) if a.preview else E.load_image(str(f))
         extra = json.loads(a.extra) if a.extra else None
-        out, ps, removed = R.erase(img, spec, a.grow, extra=extra)
+        out, ps, removed = R.erase(img, spec, a.grow, extra=extra, backend=backend)
         dst = outdir / f.name
         E.save_image(out, dst, str(f), 95)
-        print(f"{dst}  removed {removed} of {len(ps)} people  ({time.time() - t:.1f}s)")
+        print(f"{dst}  removed {removed} of {len(ps)} people  [{backend}]  ({time.time() - t:.1f}s)")
 
 
 def cmd_fill(a):
@@ -832,8 +837,10 @@ def main():
     p.add_argument("--cols", type=int, default=2); p.add_argument("-o", "--out")
     p.set_defaults(fn=cmd_people)
 
-    p = sp.add_parser("erase", help="remove bystanders (YOLOv8-seg + LaMa inpainting) into new files")
+    p = sp.add_parser("erase", help="remove bystanders + their shadows (YOLOv8-seg + OSOR/ObjectClear/LaMa) into new files")
     p.add_argument("images", nargs="+")
+    p.add_argument("--backend", default="auto", choices=["auto", "osor", "objectclear", "lama"],
+                   help="fill model: auto = osor on CUDA else lama; objectclear is non-commercial")
     p.add_argument("--remove", default="bystanders", help="'bystanders' (default), 'all', or ids '2,3,5'")
     p.add_argument("--keep", help="ids to keep; everyone else is removed")
     p.add_argument("--grow", type=float, default=0.10, help="mask dilation as fraction of person height")

@@ -16,6 +16,8 @@ AI-powered culling, Lightroom-style grading, and visual review in one skill.
 [![Gemini CLI: workflow](https://img.shields.io/badge/Gemini_CLI-Workflow-4285F4)](#working-with-ai-assistants)
 [![Processing: local](https://img.shields.io/badge/Processing-Local-4338CA)](#how-it-works)
 
+[English](README.md) · [繁體中文](README.zh-TW.md)
+
 [Get started](#get-started) · [What you can do](#what-you-can-do) · [Example prompts](#example-prompts) · [Results](#results) · [Compatibility](#platform-compatibility)
 
 </div>
@@ -152,7 +154,7 @@ The examples below come from one trip, photographed as unprocessed Sony a5100 JP
 <details>
 <summary>View bystander removal and a style comparison board</summary>
 
-Bystander removal uses person segmentation and LaMa inpainting. In this example, four visitors were removed. A person in front of the dark doorway was retained because the background structure could not be reconstructed convincingly.
+Bystander removal uses person segmentation (YOLOv8-seg) plus an effect-aware removal model: [OSOR](https://github.com/Zhouqm-Git/osor) by default on NVIDIA GPUs, [ObjectClear](https://github.com/zjx0101/ObjectClear) on request, and [LaMa](https://github.com/advimman/lama) as the fast fallback. OSOR and ObjectClear also remove the person's shadow and reflection. In this example (LaMa), four visitors were removed. A person in front of the dark doorway was retained because the background structure could not be reconstructed convincingly.
 
 ![Bystander removal comparison](docs/images/erase_DSC07991.jpg)
 
@@ -233,12 +235,13 @@ Add optional packages to the **same `uv run` invocation** that performs the oper
 | RAW decoding | `uv run --with rawpy scripts/pe.py develop "photo.ARW" --style clean-natural -o out/raw` |
 | HEIC decoding | `uv run --with pillow-heif scripts/pe.py develop "photo.HEIC" --style clean-natural -o out/heic` |
 | Person detection | `uv run --with torch --with ultralytics scripts/pe.py people "photo.jpg" -o out/people.jpg` |
+| Person removal with shadows (OSOR / ObjectClear, NVIDIA GPU) | `uv run --with torch --with ultralytics --with diffusers==0.32.2 --with peft==0.14.0 --with transformers --with accelerate scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased` (add `--with scipy` for `--backend objectclear`) |
 | Album organization | `uv run --with mediapipe --with torch --with transformers scripts/pe.py organize "photos" -o out/album` |
 | Portrait retouching | `uv run --with mediapipe scripts/pe.py develop "photo.jpg" --style vivid-iphone --no-auto -o out/portrait` |
 
 Combine `--with` options when an operation needs several capabilities. For example, person detection on a HEIC image also requires `--with pillow-heif`. Alternatively, install the dependencies in your own virtual environment and invoke `scripts/pe.py` with that environment's Python.
 
-Person removal downloads approximately 220 MB of YOLOv8 and LaMa models on first use. Album organization additionally uses MediaPipe models and approximately 600 MB of CLIP weights. Download sizes depend on model versions and existing caches.
+Person removal downloads approximately 220 MB of YOLOv8 and LaMa models on first use; the OSOR / ObjectClear backends additionally download about 7 GB of SDXL-Inpainting fp16 weights plus their own checkpoints (Hugging Face cache) and need an NVIDIA GPU with about 12 GB of VRAM. Album organization additionally uses MediaPipe models and approximately 600 MB of CLIP weights. Download sizes depend on model versions and existing caches.
 
 ## CLI reference
 
@@ -282,7 +285,9 @@ uv run scripts/pe.py stack "burst1.jpg" "burst2.jpg" "burst3.jpg" -o out/merged.
 uv run scripts/pe.py masks "photo.jpg" --mask subject --mask sky -o out/masks.jpg
 
 # Remove people after inspecting their IDs with the people command.
-uv run --with torch --with ultralytics scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased
+# --backend auto (default) = OSOR on CUDA, else LaMa; also: osor | objectclear | lama
+uv run --with torch --with ultralytics --with diffusers==0.32.2 --with peft==0.14.0 --with transformers --with accelerate scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased
+uv run --with torch --with ultralytics scripts/pe.py erase "photo.jpg" --keep 0 --backend lama -o out/erased
 
 # Fill from another frame, with LaMa fallback for uncovered regions.
 uv run --with torch --with ultralytics scripts/pe.py fill "photo.jpg" --source "burst2.jpg" --keep 0 -o out/filled.jpg
@@ -322,7 +327,7 @@ Styles are JSON files in `styles/`. Add your own using the recipe format in the 
 - **Masks:** General-purpose subject masks use face anchors, ellipses, and edge refinement rather than semantic person segmentation. Profiles, rear views, and small subjects may need manual boxes. The optional bystander-removal pipeline uses separate YOLOv8 segmentation.
 - **Burst merging:** Frames must have closely matching viewpoints. Moving regions fall back to the reference frame; substantial camera or subject movement can eliminate most of the denoising benefit.
 - **Culling:** Technical scores compare similar frames. Expressions, timing, and photographic value require visual judgment.
-- **Inpainting:** LaMa generates replacement content. Large subjects and complex structures can produce artifacts. `fill` prefers real pixels from another frame but can also fall back to LaMa. Review results at 100% magnification; avoid generated removal for documentary or identification images.
+- **Inpainting:** OSOR, ObjectClear and LaMa all generate replacement content. OSOR occasionally removes nearby shadows that belong to the scene (e.g. tree shadows) or leaves part of a shadow; ObjectClear occasionally invents objects in the gap. Kept subjects are protected from the paste. LaMa does not remove shadows. Large subjects and complex structures can produce artifacts. `fill` prefers real pixels from another frame but can also fall back to LaMa. Review results at 100% magnification; avoid generated removal for documentary or identification images.
 - **Performance:** Historical author measurements were approximately 15 seconds per 24 MP image and six minutes to cull 1,600 images with caching. Hardware and version details were not recorded, so these are not portable benchmarks.
 
 ## Troubleshooting
@@ -354,6 +359,20 @@ uv run --with numpy --with "opencv-python-headless>=4.8,<5" --with pillow python
 
 ## Acknowledgements
 
+### Models used for person removal
+
+| Model | Role | Licence | Commercial use |
+| --- | --- | --- | --- |
+| [YOLOv8-seg](https://github.com/ultralytics/ultralytics) (Ultralytics) | Person detection and masks | AGPL-3.0 | Only under AGPL terms or an Ultralytics Enterprise licence |
+| [LaMa](https://github.com/advimman/lama) (Samsung AI Center), weights via [simple-lama-inpainting](https://github.com/enesmsahin/simple-lama-inpainting) | Fast fallback inpainting | Apache-2.0 | Yes |
+| [OSOR](https://github.com/Zhouqm-Git/osor) — *One-Step Diffusion Inpainting for Effect-Aware Object Removal* ([paper](https://arxiv.org/abs/2606.28094), [weights](https://huggingface.co/QinmingZhou/OSOR)) | Default removal on CUDA, incl. shadows | Code MIT; SDXL weights CreativeML Open RAIL++-M | Yes, within the RAIL++-M use restrictions |
+| [ObjectClear](https://github.com/zjx0101/ObjectClear) — *Precise Object and Effect Removal with Adaptive Target-Aware Attention*, CVPR 2026 ([paper](https://arxiv.org/abs/2505.22636), [weights](https://huggingface.co/jixin0101/ObjectClear)) | Optional removal (`--backend objectclear`) | S-Lab License 1.0 | **No — non-commercial only** |
+| [SDXL-Inpainting 0.1](https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1) | Base model of OSOR | CreativeML Open RAIL++-M | Yes, within the use restrictions |
+
+`scripts/removers.py` contains a minimal re-implementation of OSOR's SDXL Phase-II one-step inference (MIT). ObjectClear's code is not bundled; it is cloned from its repository into the model cache on first use. Model weights are downloaded from their original hosts and are not redistributed here. If you use this removal in research, please cite the OSOR and ObjectClear papers.
+
+### Workflow references
+
 The workflow draws on ideas from these projects: [lightroom-style](https://github.com/Wyyyyuu/lightroom-style) for tonal-region color analysis and iteration discipline; [raw-photo-agent](https://github.com/Timverhoogt/raw-photo-agent) for candidate selection and independent review; [photo-skills](https://github.com/konanok/photo-skills) for culling and consistency; [chemigram](https://github.com/chipi/chemigram) for intent-to-adjustment vocabulary and preference files; [muse-skills](https://github.com/GuohongLi/muse-skills) for culling criteria; [computer-use-photo-editing-skills](https://github.com/eamonboyle/computer-use-photo-editing-skills) for grading checks and composition decisions; and [photo-retouch-pro](https://github.com/qzfcoder/photo-retouch-pro) for retouching intensity levels.
 
-These are methodological references; their source code was not copied. All example photographs were taken by the project author.
+These workflow references are methodological; their source code was not copied. All example photographs were taken by the project author.

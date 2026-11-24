@@ -318,17 +318,24 @@ pe.py develop OUT/merged.jpg --style night-city          # 再照常修圖（降
 ```bash
 pe.py people IMG -o out/people.jpg           # 編號疊圖：綠＝主角（預設保留）、紅＝路人（預設清除）
 pe.py erase IMG --preview 1200 -o out/erased # 快速試；--remove 2,5 指定編號；--keep 0 只留 0 號
+pe.py erase IMG --backend objectclear -o out/erased  # 換模型：auto（預設）| osor | objectclear | lama
 ```
 或直接寫進個別微調檔，修圖時第一步就先清除（在任何調色之前，用原始像素補背景）：
 ```json
 {"DSC07991": {"erase": "bystanders"},
  "DSC08057": {"erase": {"remove": [2, 3, 4]}},
- "DSC07038": {"erase": {"keep": [0]}}}
+ "DSC07038": {"erase": {"keep": [0], "backend": "lama"}}}
 ```
 - 偵測：YOLOv8 人物分割（固定在 1920px 上偵測，預覽和全解析度的編號一致）；清完會再偵測一次，把清了一半的殘影或漏抓的人補清。
-- 補背景：LaMa inpainting，逐區域裁切（含周圍脈絡，大洞的脈絡有上限以保留解析度）、≤2400px 推論、羽化貼回，並補回少量顆粒避免「補過的地方特別光滑」。
+- 補背景（`--backend`，預設 `auto`：有 NVIDIA GPU 且裝了 diffusers+peft 用 `osor`，否則 `lama`）：
+  - `osor`：OSOR-SDXL 單步擴散模型，**連影子、倒影一起清**，每區約 1 秒；可商用（RAIL++-M）。偶爾會把旁邊屬於場景的影子（樹影）也抹掉，或留下部分影子。
+  - `objectclear`：ObjectClear，20 步，影子處理最準、周圍保留最好，但偶爾在空缺處「發明」不存在的家具或物件；**S-Lab 授權，僅限非商用**。OSOR 結果不理想時改用它試。
+  - `lama`：原本的 LaMa，快、Mac/CPU 可跑，但不會清影子，大面積會糊成一片。
+  - 擴散模型：逐區域裁切（含周圍脈絡、下方多留給影子）、以短邊約 512px 推論、放大後只貼回「人＋模型回報的影子範圍」，其餘保留原始全解析度像素，並做色彩對齊與補顆粒。保留的主角一律不會被覆蓋（但和被清的人重疊處以「清除」為準）。
+  - LaMa：逐區域裁切、≤2400px 推論、羽化貼回、補顆粒。
 - 遮罩擴張跟人物高度成正比但有絕對上限（長邊 1.2%）：佔半個畫面的人不會連旁邊的傘、牆一起吃掉。
-- 模型第一次使用時自動下載到 `~/.cache/photo-edit/models/`（約 230MB）。
+- 模型第一次使用時自動下載：YOLO＋LaMa 到 `~/.cache/photo-edit/models/`（約 230MB）；OSOR／ObjectClear 另下載約 7GB SDXL 權重到 Hugging Face 快取，需約 12GB 顯存。
+- 依賴：`uv run --with torch --with ultralytics --with diffusers==0.32.2 --with peft==0.14.0 --with transformers --with accelerate`（objectclear 再加 `--with scipy`）。
 
 使用原則（**這是在發明不存在的背景**，所以比調色更要小心）：
 - 只清**路人**，絕不動主角；主角／路人的自動判斷只是猜測，先 用圖片檢視工具開啟 編號疊圖，不對就用 `remove`／`keep` 指定。
@@ -339,7 +346,7 @@ pe.py erase IMG --preview 1200 -o out/erased # 快速試；--remove 2,5 指定�
   - 殘影：遮罩太貼輪廓 → `grow` 加大（預設 0.10，可到 0.15）。
   - 補成一片抹痕、吃掉招牌字：背景太複雜（深色門口、文字、細結構）→ 這個人就不要清，保留他。
 - 實測（Sony JPG、哈修塔特）：石板路上、牆前的小路人清得很乾淨；站在深色門口＋招牌前、佔畫面高度約 10% 的路人，無論怎麼調都會穿幫 → 保留。
-- 影子、倒影、被路人拿著的東西（行李箱、腳踏車）不會一起清掉，要另外處理或接受。
+- 影子、倒影：`osor`／`objectclear` 會一起清；`lama` 不會。被路人拿著的東西（行李箱、腳踏車）不一定會一起清掉，要用 `extra` 補框或接受。
 - 交件時說明哪幾張清過路人。紀實、新聞、證件用途的照片不要清。
 
 ### 有連拍／同場景另一張時：用真實像素補（`pe.py fill`，優先於 `erase`）

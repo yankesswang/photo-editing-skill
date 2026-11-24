@@ -738,7 +738,7 @@ def develop(img, recipe):
         spec = r["erase"]
         spec = spec if isinstance(spec, dict) else {"remove": spec}
         img, _, _ = R.erase(img, spec.get("remove", "bystanders") if "keep" not in spec else {"keep": spec["keep"]},
-                            spec.get("grow", 0.10), extra=spec.get("extra"))
+                            spec.get("grow", 0.10), extra=spec.get("extra"), backend=spec.get("backend", "auto"))
     pre_geom = img.shape[:2]
     img = geometry(img, r)
     h, w = img.shape[:2]
