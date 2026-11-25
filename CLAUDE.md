@@ -221,7 +221,7 @@ recipe 的 `masks` 是一串局部調整，每個 = 遮罩 + 局部滑桿：
 | `luminance` | 亮度範圍（0–1）；只動暗部或亮部 |
 | `color` | 色相範圍；只動某個顏色（綠草太螢光、水太綠） |
 | `boxes` | 手動指定的人物框 `[x,y,w,h]`（偵測失敗時用） |
-| `matte` | iPhone 自帶的語意遮罩：`{"type": "matte", "name": "skin"}`（portrait/skin/hair/teeth/glasses/sky；需 `pe.py mattes` 的 sidecar，見「人像修圖」） |
+| `matte` | 語意遮罩：`{"type": "matte", "name": "skin"}`。iPhone 用 `pe.py mattes`（portrait/skin/hair/teeth/glasses/sky）；其他相機用 `pe.py seg-mattes`（portrait/skin/eyes/teeth/lips）。見「人像修圖」 |
 
 共通選項：`invert`、`amount`、`feather`、`intersect: [...]`、`subtract: [...]`。人物／天空遮罩預設會做邊緣貼合（guided filter）。
 局部滑桿：temp、tint、exposure、contrast、highlights、shadows、whites、blacks、clarity、texture、dehaze、saturation、vibrance、hsl。
@@ -264,6 +264,30 @@ pe.py mattes IMG_7532.HEIC -o DIR      # -> DIR/IMG_7532.mattes/{portrait,skin,h
 - **sidecar 規則**：`develop` 找 `<影像 stem>.mattes/`（跟影像同資料夾）。影像改過名就把 `.mattes` 資料夾改成同樣的 stem。
 - 只有「照片」App 匯出**原檔**（`with using originals`）才有遮罩；照片 App 一般匯出的 JPG 會把它們丟掉。實際做法：原檔抽遮罩，像素用 `sips -s format jpeg` 轉出來或照片 App 一般匯出的 JPG（兩者幾何相同），保留原檔；若要清理暫存匯出副本，先確認它不是唯一一份照片，並依使用者授權處理。
 - 遮罩也能當局部遮罩用：`{"type": "matte", "name": "skin"}`（沒有 sidecar 時是空遮罩，對其他相機安全）。
+
+### 其他相機（Sony／Canon／Android）：`pe.py seg-mattes`
+沒有 iPhone 遮罩時，用 AI 產生同樣格式的 sidecar，之後的 `matte` 遮罩、`skin_anchor` 都照常運作：
+```bash
+uv run --with torch --with ultralytics --with mediapipe scripts/pe.py seg-mattes IMG.JPG       # -> IMG.mattes/{portrait,skin,eyes,teeth,lips}.png
+pe.py seg-mattes IMG.JPG --keep 0,1      # 主角被 YOLO 拆成兩個框、或自動判斷錯時，指定 `pe.py people` 的編號
+```
+- `portrait`＝YOLOv8-seg 主角輪廓＋邊緣貼合；YOLO 漏抓人但有臉時，改用臉部錨點的頭肩橢圓。
+- `skin`／`eyes`／`teeth`／`lips`＝MediaPipe 478 點臉部網格。臉在主角框的放大裁切上偵測，廣角旅行照裡的小臉也抓得到。
+- `skin` 只有臉部橢圓（扣掉眼、眉、嘴；比臉暗很多的瀏海排除）。**刻意不做脖子／手**：用膚色判斷的身體皮膚會吃進頭髮、駝色大衣、白外套。
+- 原檔在唯讀位置（SD 卡）時，在工作資料夾建 symlink 指向原檔，`-o` 指到同一個資料夾；`develop` 以 symlink 路徑找 sidecar。
+
+**街拍／旅行人像的定案做法**（維也納 20 張實跑，使用者接受的版本）：臉維持原圖、風格只套在環境：
+```json
+{"skin_anchor": {"amount": 0.45, "lum": 0, "sat": 1.0, "teeth": 0.3},
+ "masks": [
+  {"name": "person: separate", "mask": {"type": "matte", "name": "portrait"}, "adjust": {"exposure": 0.06}},
+  {"name": "background: recede", "mask": {"type": "matte", "name": "portrait", "invert": true}, "adjust": {"exposure": -0.08, "saturation": -4}},
+  {"name": "eyes: sparkle", "mask": {"type": "matte", "name": "eyes"}, "adjust": {"exposure": 0.06, "clarity": 6, "saturation": -35}},
+  {"name": "lips: natural", "mask": {"type": "matte", "name": "lips"}, "adjust": {"saturation": -25}}]}
+```
+- 暖色風格的臉偏橘偏深時 `skin_anchor.amount` 拉到 0.75；**不要加 beauty、不要提亮皮膚**：逆光臉被磨皮＋提亮後變得慘白扁平、嘴唇發灰，使用者說「修過頭了，整個壞掉」。
+- 臉本身太暗（背光、帽簷陰影）才加 `{"type": "face", "scale": 1.5, "feather": 70}` 的 dodge：`{"exposure": 0.45, "shadows": 30, "saturation": -8}`。
+- 紅色風格會把嘴唇染成口紅色、虹膜染紅、紅帽子過飽和並映紅臉頰 → 用上面的 lips／eyes 降飽和，紅色衣物另加 `color` 遮罩 `intersect` `portrait` 降飽和。
 
 ### 人像參數（`vivid-iphone` 已內建定案值）
 ```bash
@@ -397,7 +421,7 @@ pe.py organize DIR --category-sheets     # 每個類別也出一組總覽圖，�
 ## 限制（老實說）
 - 這是 Lightroom 演算法的近似，不是 Adobe 的引擎；同一組數字在 Lightroom 裡會接近但不會像素級一致。
 - JPG 輸入（相機已經套過曲線）高光救回空間小，已經死白的天空救不回細節；有 RAW 就用 RAW（但沒有鏡頭變形／暗角校正）。
-- 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影、很小的人可能偵測不到，這時用 `boxes` 手動指定。
+- 內建的 `subject` 人物遮罩是「人臉錨點＋橢圓＋邊緣貼合」，不是 AI 分割；側臉、背影、很小的人可能偵測不到，這時用 `boxes` 手動指定，或用 `pe.py seg-mattes` 產生 AI 分割的 `portrait` 遮罩。
 - 選片的技術分數只比較同一組裡幾乎一樣的照片；哪些瞬間值得留，要靠 AI 助理看圖判斷。
 - `xmp` 匯出不包含局部遮罩和清除路人（Lightroom 預設檔的遮罩格式不同），只匯出全域設定。
 - 清除路人是生成式補圖：小路人在單純背景（石板路、牆面、天空）上效果好；大面積、複雜結構（人群、建築細節）可能穿幫。

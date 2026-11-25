@@ -1,0 +1,120 @@
+{
+ "name": "vienna-film",
+ "description": "Warm moody film (Vienna autumn street look): deep contrasty shadows with a slight matte lift, creamy warm highlights, punchy orange-red, greens muted to olive, blue skies shifted to deep petrol teal, fine grain. Overcast frames: add {\"exposure\": 0.18, \"contrast\": -4, \"highlights\": 15, \"dehaze\": 12, \"vibrance\": 12, \"temp\": -4} so grey days stay bright, not muddy.",
+ "use_for": [
+  "street",
+  "city",
+  "architecture",
+  "autumn",
+  "travel"
+ ],
+ "avoid_for": [
+  "bright cheerful",
+  "pastel",
+  "close-up portraits without skin_anchor"
+ ],
+ "exposure": 0.0,
+ "temp": 9,
+ "contrast": 26,
+ "highlights": -35,
+ "shadows": -8,
+ "whites": -5,
+ "blacks": -12,
+ "clarity": 10,
+ "texture": 14,
+ "vibrance": 10,
+ "saturation": 4,
+ "tone_curve": {
+  "master": [
+   [
+    0,
+    14
+   ],
+   [
+    50,
+    42
+   ],
+   [
+    128,
+    126
+   ],
+   [
+    200,
+    207
+   ],
+   [
+    255,
+    244
+   ]
+  ]
+ },
+ "hsl": {
+  "red": {
+   "hue": 6,
+   "sat": 25,
+   "lum": -6
+  },
+  "orange": {
+   "hue": -5,
+   "sat": 15,
+   "lum": -2
+  },
+  "yellow": {
+   "hue": -15,
+   "sat": 0,
+   "lum": -10
+  },
+  "green": {
+   "hue": -35,
+   "sat": -35,
+   "lum": -20
+  },
+  "aqua": {
+   "hue": -10,
+   "sat": -5,
+   "lum": -15
+  },
+  "blue": {
+   "hue": -22,
+   "sat": 0,
+   "lum": -28
+  },
+  "purple": {
+   "sat": -35
+  },
+  "magenta": {
+   "sat": -30
+  }
+ },
+ "color_grade": {
+  "shadows": {
+   "hue": 30,
+   "sat": 10
+  },
+  "midtones": {
+   "hue": 35,
+   "sat": 8
+  },
+  "highlights": {
+   "hue": 42,
+   "sat": 20
+  },
+  "balance": -5,
+  "blending": 55
+ },
+ "vignette": {
+  "amount": -12,
+  "midpoint": 45,
+  "feather": 70
+ },
+ "grain": {
+  "amount": 12,
+  "size": 20,
+  "roughness": 45
+ },
+ "sharpen": {
+  "amount": 45,
+  "radius": 1.0,
+  "masking": 60
+ }
+}

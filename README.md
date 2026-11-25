@@ -7,10 +7,10 @@
 From a full memory card to a collection worth keeping.<br>
 AI-powered culling, Lightroom-style grading, and visual review in one skill.
 
-**12 built-in looks · Visual review and refinement · Full-resolution JPEG + JSON recipes + Lightroom XMP**
+**13 built-in looks · Visual review and refinement · Full-resolution JPEG + JSON recipes + Lightroom XMP**
 
 [![Python: 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](#get-started)
-[![Built-in styles: 12](https://img.shields.io/badge/Styles-12-F59E0B)](#built-in-styles)
+[![Built-in styles: 13](https://img.shields.io/badge/Styles-13-F59E0B)](#built-in-styles)
 [![Codex: workflow](https://img.shields.io/badge/Codex-Workflow-10A37F)](#working-with-ai-assistants)
 [![Claude Code: workflow](https://img.shields.io/badge/Claude_Code-Workflow-D97757)](#working-with-ai-assistants)
 [![Gemini CLI: workflow](https://img.shields.io/badge/Gemini_CLI-Workflow-4285F4)](#working-with-ai-assistants)
@@ -99,9 +99,9 @@ Keep edited files in a separate output directory. Source images are preserved.
 | --- | --- | --- |
 | **Cull a shoot** | Find the strongest frames, compare bursts, and flag blur or poor exposure | Ranked selections, contact sheets, and an input list for editing |
 | **Develop a collection** | Correct exposure and white balance, then apply a consistent look | Full-resolution JPEGs and per-image recipes |
-| **Find your look** | Compare 12 built-in styles or derive settings from a reference image | A style board or a custom JSON recipe |
+| **Find your look** | Compare 13 built-in styles or derive settings from a reference image | A style board or a custom JSON recipe |
 | **Refine specific areas** | Lift a subject, control a bright sky, or adjust a color range | Local adjustments with mask previews |
-| **Retouch portraits** | Make subtle skin, under-eye, teeth, and face-shape adjustments | Retouched images; optional iPhone matte support |
+| **Retouch portraits** | Make subtle skin, under-eye, teeth, and face-shape adjustments | Retouched images; iPhone mattes or AI semantic mattes for other cameras |
 | **Clean up night shots** | Reduce noise in a single image or merge a closely aligned burst | A denoised image ready for grading |
 | **Remove bystanders** | Remove distractions using another frame or generated background fill | Edited images with alignment and fill-quality warnings |
 | **Organize an album** | Group photos by event and content, then review potential rejects | An HTML report, review lists, and optional categorized folders |
@@ -236,10 +236,11 @@ The core CLI uses portable Python libraries. **Core workflows have been tested o
 | HEIC / HEIF decoding | `pillow-heif` | `pillow-heif` | `pillow-heif` or system `sips` | Decoding does not extract iPhone mattes |
 | Album classification, portrait retouching, bystander removal | Optional | Optional | Optional | Compatible packages and models; see below |
 | Existing iPhone matte sidecars | Shared workflow | Shared workflow | Shared workflow | Matching `<image-stem>.mattes/` directory beside the image |
+| Semantic mattes for any camera (`seg-mattes`) | Optional | Optional | Optional | `torch`, `ultralytics`, `mediapipe`; writes the same `<image-stem>.mattes/` layout |
 | Extracting iPhone mattes | Unavailable | Unavailable | Available | Apple ImageIO, `swiftc`, and an original containing the auxiliary images |
 | Apple Photos access and import | Unavailable | Unavailable | Available | Photos, AppleScript, and system permissions |
 
-On Windows and Linux, use a local photo directory instead of Apple Photos. iPhone mattes can be extracted on a Mac and copied with the matching images, or replaced with the engine's general-purpose masks.
+On Windows and Linux, use a local photo directory instead of Apple Photos. iPhone mattes can be extracted on a Mac and copied with the matching images. For other cameras, `pe.py seg-mattes` builds person, skin, eye, teeth, and lip mattes with YOLOv8-seg and MediaPipe, so portrait masks and `skin_anchor` work on Sony, Canon, or Android photos too.
 
 ### Optional dependencies
 
@@ -252,6 +253,7 @@ Add optional packages to the **same `uv run` invocation** that performs the oper
 | Person detection | `uv run --with torch --with ultralytics scripts/pe.py people "photo.jpg" -o out/people.jpg` |
 | Person removal with shadows (OSOR / ObjectClear, NVIDIA GPU) | `uv run --with torch --with ultralytics --with diffusers==0.32.2 --with peft==0.14.0 --with transformers --with accelerate scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased` (add `--with scipy` for `--backend objectclear`) |
 | Album organization | `uv run --with mediapipe --with torch --with transformers scripts/pe.py organize "photos" -o out/album` |
+| Semantic mattes for non-iPhone portraits | `uv run --with torch --with ultralytics --with mediapipe scripts/pe.py seg-mattes "photo.jpg"` |
 | Portrait retouching | `uv run --with mediapipe scripts/pe.py develop "photo.jpg" --style vivid-iphone --no-auto -o out/portrait` |
 
 Combine `--with` options when an operation needs several capabilities. For example, person detection on a HEIC image also requires `--with pillow-heif`. Alternatively, install the dependencies in your own virtual environment and invoke `scripts/pe.py` with that environment's Python.
@@ -332,6 +334,7 @@ Use `uv run scripts/pe.py <command> --help` for command options. Inspect the num
 | `golden-hour` | Sunset scenes and portraits; warm golden tones |
 | `film-portra-clear` | Daylight travel; Portra-inspired color with blue skies retained |
 | `vivid-iphone` | iPhone portraits; vivid backgrounds and subtle retouching; use `--no-auto` |
+| `vienna-film` | European streets, architecture, and autumn travel; warm moody film with punchy reds, olive greens, and deep teal skies |
 
 Styles are JSON files in `styles/`. Add your own using the recipe format in the [editing guide](references/editing-guide.md). Global settings can be exported with `pe.py xmp <style>`.
 
@@ -339,7 +342,7 @@ Styles are JSON files in `styles/`. Add your own using the recipe format in the 
 
 - **Lightroom compatibility:** Controls approximate Lightroom behavior. Identical parameter values do not produce pixel-identical Adobe renders. XMP export includes global adjustments, not local masks or object removal.
 - **Input latitude:** JPEGs have limited highlight recovery. RAW decoding offers more latitude but does not apply lens-distortion or lens-vignetting corrections.
-- **Masks:** General-purpose subject masks use face anchors, ellipses, and edge refinement rather than semantic person segmentation. Profiles, rear views, and small subjects may need manual boxes. The optional bystander-removal pipeline uses separate YOLOv8 segmentation.
+- **Masks:** General-purpose subject masks use face anchors, ellipses, and edge refinement rather than semantic person segmentation. Profiles, rear views, and small subjects may need manual boxes, or semantic mattes from `pe.py seg-mattes`. The optional bystander-removal pipeline uses separate YOLOv8 segmentation.
 - **Burst merging:** Frames must have closely matching viewpoints. Moving regions fall back to the reference frame; substantial camera or subject movement can eliminate most of the denoising benefit.
 - **Culling:** Technical scores compare similar frames. Expressions, timing, and photographic value require visual judgment.
 - **Inpainting:** OSOR, ObjectClear and LaMa all generate replacement content. OSOR occasionally removes nearby shadows that belong to the scene (e.g. tree shadows) or leaves part of a shadow; ObjectClear occasionally invents objects in the gap. Kept subjects are protected from the paste. LaMa does not remove shadows. Large subjects and complex structures can produce artifacts. `fill` prefers real pixels from another frame but can also fall back to LaMa. Review results at 100% magnification; avoid generated removal for documentary or identification images.

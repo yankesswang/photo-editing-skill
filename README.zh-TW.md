@@ -7,10 +7,10 @@
 從一整張記憶卡，到值得珍藏的作品集。<br>
 選片、Lightroom 風格調色、看圖檢查，一個 Skill 完成整套修圖流程。
 
-**12 種內建風格 · 看圖檢查與修正 · 全解析度 JPEG + JSON 參數檔 + Lightroom XMP**
+**13 種內建風格 · 看圖檢查與修正 · 全解析度 JPEG + JSON 參數檔 + Lightroom XMP**
 
 [![Python: 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](#快速開始)
-[![內建風格：12 種](https://img.shields.io/badge/Styles-12-F59E0B)](#內建風格)
+[![內建風格：13 種](https://img.shields.io/badge/Styles-13-F59E0B)](#內建風格)
 [![Codex 工作流程](https://img.shields.io/badge/Codex-Workflow-10A37F)](#搭配-ai-助理)
 [![Claude Code 工作流程](https://img.shields.io/badge/Claude_Code-Workflow-D97757)](#搭配-ai-助理)
 [![Gemini CLI 工作流程](https://img.shields.io/badge/Gemini_CLI-Workflow-4285F4)](#搭配-ai-助理)
@@ -99,9 +99,9 @@ uv run scripts/pe.py compare "photo.jpg" "out/final/photo_film-portra.jpg" -o ou
 | --- | --- | --- |
 | **選片** | 挑出精彩瞬間、比較連拍、標記模糊與曝光不佳的照片 | 排序後的入選照片、總覽圖與修圖清單 |
 | **整批調色** | 校正曝光與白平衡，建立一致的整組風格 | 全解析度 JPEG 與逐張參數檔 |
-| **尋找風格** | 比較 12 種內建風格，或從參考圖推導調色設定 | 風格板或自訂 JSON 參數檔 |
+| **尋找風格** | 比較 13 種內建風格，或從參考圖推導調色設定 | 風格板或自訂 JSON 參數檔 |
 | **局部調整** | 提亮主體、壓住過亮天空、調整特定顏色 | 局部修正與遮罩預覽 |
-| **人像修飾** | 輕微調整膚質、黑眼圈、牙齒與臉部輪廓 | 人像成品；可搭配 iPhone 原生遮罩 |
+| **人像修飾** | 輕微調整膚質、黑眼圈、牙齒與臉部輪廓 | 人像成品；可搭配 iPhone 原生遮罩，其他相機用 AI 語意遮罩 |
 | **夜景降噪** | 處理單張雜訊，或合併構圖接近的連拍 | 可接續調色的低雜訊影像 |
 | **清除路人** | 用另一張照片的背景，或生成式補圖移除干擾 | 處理後照片，以及對齊與補圖品質警告 |
 | **相簿整理** | 按活動與內容分類，審查可能不需要的照片 | HTML 報告、待確認清單與選配分類資料夾 |
@@ -234,10 +234,11 @@ Python、NumPy 與 OpenCV 引擎負責影像處理；AI 助理負責理解場景
 | HEIC／HEIF 解碼 | `pillow-heif` | `pillow-heif` | `pillow-heif` 或系統 `sips` | 讀取影像不等於抽取 iPhone 遮罩 |
 | 相簿分類、人像修飾、清除路人 | 選配 | 選配 | 選配 | 相容的套件與模型，詳見下方 |
 | 使用既有 iPhone 遮罩附屬檔 | 共用流程 | 共用流程 | 共用流程 | 照片旁須有同名 `<image-stem>.mattes/` 資料夾 |
+| 任何相機的語意遮罩（`seg-mattes`） | 選配 | 選配 | 選配 | `torch`、`ultralytics`、`mediapipe`；輸出與 iPhone 相同的 `<image-stem>.mattes/` 格式 |
 | 抽取 iPhone 遮罩 | 不提供 | 不提供 | 提供 | Apple ImageIO、`swiftc`，且原檔須含輔助影像 |
 | 存取／匯入 Apple「照片」App | 不提供 | 不提供 | 提供 | 照片 App、AppleScript 與系統權限 |
 
-Windows／Linux 使用一般照片資料夾取代 Apple「照片」App。iPhone 遮罩可先在 Mac 抽取，再與對應照片一起複製；也可改用引擎的一般遮罩。
+Windows／Linux 使用一般照片資料夾取代 Apple「照片」App。iPhone 遮罩可先在 Mac 抽取，再與對應照片一起複製。其他相機可用 `pe.py seg-mattes`，以 YOLOv8-seg 與 MediaPipe 產生人物、皮膚、眼睛、牙齒與嘴唇遮罩，讓 Sony、Canon、Android 照片也能用人像遮罩與 `skin_anchor`。
 
 ### 選配依賴
 
@@ -250,6 +251,7 @@ Windows／Linux 使用一般照片資料夾取代 Apple「照片」App。iPhone 
 | 人物偵測 | `uv run --with torch --with ultralytics scripts/pe.py people "photo.jpg" -o out/people.jpg` |
 | 連同影子清除路人（OSOR／ObjectClear，需 NVIDIA GPU） | `uv run --with torch --with ultralytics --with diffusers==0.32.2 --with peft==0.14.0 --with transformers --with accelerate scripts/pe.py erase "photo.jpg" --keep 0 -o out/erased`（使用 `--backend objectclear` 時另加 `--with scipy`） |
 | 相簿整理 | `uv run --with mediapipe --with torch --with transformers scripts/pe.py organize "photos" -o out/album` |
+| 非 iPhone 人像的語意遮罩 | `uv run --with torch --with ultralytics --with mediapipe scripts/pe.py seg-mattes "photo.jpg"` |
 | 人像修飾 | `uv run --with mediapipe scripts/pe.py develop "photo.jpg" --style vivid-iphone --no-auto -o out/portrait` |
 
 複合功能可同時加入多個 `--with`。例如在 HEIC 照片偵測人物，還需要 `--with pillow-heif`。也可自行建立虛擬環境、安裝依賴，再用該環境的 Python 執行 `scripts/pe.py`。
@@ -330,6 +332,7 @@ uv run scripts/pe.py xmp film-portra -o out/film-portra.xmp
 | `golden-hour` | 日落與人像，暖金色影調 |
 | `film-portra-clear` | 晴天旅行，保留藍天的 Portra 風格 |
 | `vivid-iphone` | iPhone 人像，鮮豔背景與輕微修飾；搭配 `--no-auto` |
+| `vienna-film` | 歐洲街景、建築與秋天旅行，暖調電影底片感：紅橘鮮明、綠轉橄欖、深青藍天 |
 
 風格以 JSON 檔存放於 `styles/`，可依[調整參數指南](references/editing-guide.md)新增。全域設定可用 `pe.py xmp <style>` 匯出。
 
@@ -337,7 +340,7 @@ uv run scripts/pe.py xmp film-portra -o out/film-portra.xmp
 
 - **Lightroom 相容性：** 控制項近似 Lightroom 行為，相同數值不保證與 Adobe 引擎產生逐像素一致的結果。XMP 只匯出全域設定，不包含局部遮罩與物件清除。
 - **輸入寬容度：** JPEG 的高光救回空間有限。RAW 有較大的調整空間，但解碼不包含鏡頭變形與暗角校正。
-- **遮罩：** 一般主體遮罩使用人臉錨點、橢圓與邊緣貼合，不是語意人物分割；側臉、背影與小主體可能需要手動框選。選配的路人清除流程另使用 YOLOv8 分割。
+- **遮罩：** 一般主體遮罩使用人臉錨點、橢圓與邊緣貼合，不是語意人物分割；側臉、背影與小主體可能需要手動框選，或改用 `pe.py seg-mattes` 的語意遮罩。選配的路人清除流程另使用 YOLOv8 分割。
 - **連拍合併：** 照片視角必須接近，移動區域會退回參考張；相機或主體大幅移動時，降噪效果可能很有限。
 - **選片：** 技術分數只用於比較相似照片，表情、瞬間與作品價值仍需看圖判斷。
 - **生成式補圖：** OSOR、ObjectClear 與 LaMa 都會生成替代內容。OSOR 偶爾會連帶抹掉屬於場景的影子（例如樹影）或留下部分影子；ObjectClear 偶爾會在空缺處生出不存在的物件。保留的主體不會被覆蓋。LaMa 不會移除影子，大面積人物與複雜結構可能出現瑕疵。`fill` 優先使用其他照片的真實像素，但仍可能回退至 LaMa。應以 100% 放大檢查；紀實或證件用途避免使用生成式移除。

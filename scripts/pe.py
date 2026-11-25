@@ -369,6 +369,14 @@ def cmd_mattes(a):
         print(f"{f.name}: {r.stdout.strip() or 'no mattes'}")
 
 
+def cmd_seg_mattes(a):
+    """Any camera -> <stem>.mattes/{portrait,skin,eyes,teeth,lips}.png via YOLOv8-seg + MediaPipe face mesh."""
+    import seg_mattes
+    keep = [int(x) for x in a.keep.split(",")] if a.keep else None
+    for f in expand(a.images):
+        print(f"{f.name}: {seg_mattes.build(f, a.out, keep)}")
+
+
 def cmd_masks(a):
     """Show every mask of a recipe as a red overlay (verify coverage before trusting a local edit)."""
     import masks as M
@@ -864,6 +872,11 @@ def main():
     p = sp.add_parser("mattes", help="extract the iPhone's own segmentation mattes (skin/hair/teeth/person/sky)")
     p.add_argument("images", nargs="+"); p.add_argument("-o", "--out", help="dir for <stem>.mattes/ (default: next to image)")
     p.set_defaults(fn=cmd_mattes)
+
+    p = sp.add_parser("seg-mattes", help="semantic mattes for any camera (person/skin/eyes/teeth/lips; YOLOv8-seg + MediaPipe)")
+    p.add_argument("images", nargs="+"); p.add_argument("-o", "--out", help="dir for <stem>.mattes/ (default: next to image)")
+    p.add_argument("--keep", help="person ids from `pe.py people` to treat as the subject (default: auto subject)")
+    p.set_defaults(fn=cmd_seg_mattes)
 
     p = sp.add_parser("match"); p.add_argument("image"); p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--strength", type=float, default=0.8); p.add_argument("-o", "--out")
