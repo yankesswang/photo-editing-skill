@@ -1,0 +1,39 @@
+{
+  "name": "photo-editing-skill",
+  "version": "0.1.0",
+  "description": "Give your AI a photographer's eye: AI-assisted culling, Lightroom-style grading and visual review as an agent skill for Claude Code, Codex and Gemini CLI.",
+  "bin": {
+    "photo-editing-skill": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "SKILL.md",
+    "scripts/*.py",
+    "scripts/*.swift",
+    "styles/",
+    "references/",
+    "README.md",
+    "README.zh-TW.md"
+  ],
+  "engines": {
+    "node": ">=12"
+  },
+  "keywords": [
+    "claude-code",
+    "skill",
+    "agent-skill",
+    "codex",
+    "gemini-cli",
+    "photo",
+    "photography",
+    "lightroom",
+    "color-grading"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yankesswang/photo-editing-skill.git"
+  },
+  "homepage": "https://github.com/yankesswang/photo-editing-skill#readme",
+  "bugs": "https://github.com/yankesswang/photo-editing-skill/issues",
+  "author": "yankesswang"
+}

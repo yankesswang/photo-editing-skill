@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="docs/images/logo.svg" height="48" align="top" alt="相機圖示"> photo-edit-skill
+# <img src="docs/images/logo.svg" height="48" align="top" alt="相機圖示"> photo-editing-skill
 
 **讓你的 AI，擁有攝影師的眼光。**
 
@@ -22,7 +22,7 @@
 
 </div>
 
-photo-edit-skill 為 AI 助理提供完整的修圖流程：挑出精彩瞬間、校正光線與色彩、建立整組一致的風格，並在交件前實際檢查成品。
+photo-editing-skill 為 AI 助理提供完整的修圖流程：挑出精彩瞬間、校正光線與色彩、建立整組一致的風格，並在交件前實際檢查成品。
 
 可搭配 **Codex、Claude Code、Gemini CLI**，或其他能讀取檔案、執行命令與檢視圖片的 AI 助理。內建影像引擎在本機運作，調色設定以參數檔保存，方便檢查與重複使用。
 
@@ -32,13 +32,28 @@ photo-edit-skill 為 AI 助理提供完整的修圖流程：挑出精彩瞬間�
 
 ## 快速開始
 
+### 用 npx 快速安裝
+
+把 skill 安裝到 AI 助理的 skills 資料夾（需要 Node.js；處理引擎仍需要 Python 3.9+ 與 [uv](https://docs.astral.sh/uv/)）：
+
+```sh
+npx photo-editing-skill            # Claude Code：~/.claude/skills/photo-edit
+npx photo-editing-skill --codex    # Codex：      ~/.codex/skills/photo-edit
+npx photo-editing-skill --gemini   # Gemini CLI： ~/.gemini/skills/photo-edit
+npx photo-editing-skill --all      # 全部安裝
+npx photo-editing-skill --project  # 只裝在目前專案：./.claude/skills/photo-edit
+npx photo-editing-skill pe doctor  # 直接執行引擎
+```
+
+重新執行即可更新；`npx photo-editing-skill uninstall` 可移除。若要從原始碼使用，請依照以下步驟。
+
 ### 1. 設定本機環境
 
 準備好 **Git、Python 3.9+ 與 uv**，在 macOS／Linux 終端機或 Windows PowerShell 執行：
 
 ```sh
-git clone https://github.com/yankesswang/photo-edit-skill.git
-cd photo-edit-skill
+git clone https://github.com/yankesswang/photo-editing-skill.git
+cd photo-editing-skill
 uv run scripts/pe.py doctor
 ```
 

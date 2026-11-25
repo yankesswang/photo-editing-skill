@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="docs/images/logo.svg" height="48" align="top" alt="Camera icon"> photo-edit-skill
+# <img src="docs/images/logo.svg" height="48" align="top" alt="Camera icon"> photo-editing-skill
 
 **Give your AI a photographer's eye.**
 
@@ -22,7 +22,7 @@ AI-powered culling, Lightroom-style grading, and visual review in one skill.
 
 </div>
 
-photo-edit-skill gives your AI assistant a complete photo-editing workflow: select the strongest shots, correct light and color, develop a consistent look, and inspect the results before delivery.
+photo-editing-skill gives your AI assistant a complete photo-editing workflow: select the strongest shots, correct light and color, develop a consistent look, and inspect the results before delivery.
 
 Use it with **Codex, Claude Code, Gemini CLI**, or another assistant with file, terminal, and image access. The included processing engine runs locally, with grading recipes you can inspect and reuse.
 
@@ -32,13 +32,28 @@ Use it with **Codex, Claude Code, Gemini CLI**, or another assistant with file, 
 
 ## Get started
 
+### Quick install with npx
+
+Install the skill into your assistant's skills folder (needs Node.js; the engine still needs Python 3.9+ and [uv](https://docs.astral.sh/uv/)):
+
+```sh
+npx photo-editing-skill            # Claude Code: ~/.claude/skills/photo-edit
+npx photo-editing-skill --codex    # Codex:       ~/.codex/skills/photo-edit
+npx photo-editing-skill --gemini   # Gemini CLI:  ~/.gemini/skills/photo-edit
+npx photo-editing-skill --all      # all three
+npx photo-editing-skill --project  # this project only: ./.claude/skills/photo-edit
+npx photo-editing-skill pe doctor  # run the engine directly
+```
+
+Re-run to update; `npx photo-editing-skill uninstall` removes it. To work from source instead, follow the steps below.
+
 ### 1. Set up the local engine
 
 You need **Git, Python 3.9+, and uv**. Run the following in macOS or Linux terminals, or Windows PowerShell:
 
 ```sh
-git clone https://github.com/yankesswang/photo-edit-skill.git
-cd photo-edit-skill
+git clone https://github.com/yankesswang/photo-editing-skill.git
+cd photo-editing-skill
 uv run scripts/pe.py doctor
 ```
 

@@ -165,7 +165,7 @@ def save_image(arr, path, src_path=None, quality=92):
             src = exif_image(src_path)
             exif = src.getexif()
             exif[0x0112] = 1  # pixels are already upright
-            exif[0x0131] = "photo-edit-skill"
+            exif[0x0131] = "photo-editing-skill"
             kw["exif"] = exif.tobytes()
             if src.info.get("icc_profile"):
                 kw["icc_profile"] = src.info["icc_profile"]
